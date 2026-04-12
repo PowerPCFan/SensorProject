@@ -1,0 +1,29 @@
+if [ -n "$BASH_VERSION" ]; then
+    SENSOR_ENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+elif [ -n "$ZSH_VERSION" ]; then
+    SENSOR_ENV_DIR="$(cd "$(dirname "${(%):-%x}")" && pwd)"
+else
+    SENSOR_ENV_DIR="$PWD"
+fi
+
+if [ -z "$SENSOR_OLD_PS1" ]; then
+    export SENSOR_OLD_PS1="$PS1"
+fi
+
+export PS1="(api) $PS1"
+
+alias start="$SENSOR_ENV_DIR/docker-utils/start.sh"
+alias stop="$SENSOR_ENV_DIR/docker-utils/stop.sh"
+alias restart="$SENSOR_ENV_DIR/docker-utils/restart.sh"
+alias logs="$SENSOR_ENV_DIR/docker-utils/logs.sh"
+alias rebuild="$SENSOR_ENV_DIR/docker-utils/rebuild.sh"
+
+deactivate() {
+    export PS1="$SENSOR_OLD_PS1"
+    unset SENSOR_OLD_PS1
+    unalias start stop restart logs rebuild 2>/dev/null
+    unset -f deactivate
+    echo "Deactivated api environment."
+}
+
+echo "activated! commands: start, stop, restart, logs, rebuild, deactivate"

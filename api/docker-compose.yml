@@ -1,0 +1,21 @@
+services:
+  api:
+    build: .
+    container_name: api
+    ports:
+      - "8080:8080"
+    env_file:
+      - "../timescaledb/.env"
+      - ".env"
+    restart: unless-stopped
+    volumes:
+      - ../timescaledb/.env:/timescaledb/.env:ro
+      - ./.env:/app/.env:ro
+    networks:
+      - default
+      - timescaledb_net
+
+networks:
+  timescaledb_net:
+    external: true
+    name: timescaledb_default

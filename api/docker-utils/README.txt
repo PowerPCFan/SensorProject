@@ -1,0 +1,1 @@
+i kept forgetting the docker commands lol
