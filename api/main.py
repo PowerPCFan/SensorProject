@@ -82,8 +82,8 @@ class OutdoorMeasurement(Base):
     humidity = Column(Float)
     pressure = Column(Float)
     light_level = Column(Float)
-    battery_voltage = Column(Float)
-    espnow_strength_dbm = Column(Float)
+    esp32_temperature = Column(Float)
+    wifi_strength = Column(Float)
 
 
 class IndoorMeasurement(Base):
@@ -120,8 +120,8 @@ class OutdoorData(BaseModel):
     humidity: float | None = None
     pressure: float | None = None
     light_level: float | None = None
-    battery_voltage: float | None = None
-    espnow_strength_dbm: float | None = None
+    esp32_temperature: float | None = None
+    wifi_strength: float | None = None
 
 
 class PMBins(BaseModel):

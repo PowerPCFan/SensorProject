@@ -8,8 +8,8 @@ CREATE TABLE IF NOT EXISTS outdoor (
     humidity DOUBLE PRECISION,
     pressure DOUBLE PRECISION,
     light_level DOUBLE PRECISION,
-    battery_voltage DOUBLE PRECISION,
-    espnow_strength_dbm DOUBLE PRECISION
+    esp32_temperature DOUBLE PRECISION,
+    wifi_strength DOUBLE PRECISION
 );
 
 CREATE TABLE IF NOT EXISTS indoor (
@@ -97,8 +97,8 @@ SELECT
     avg(humidity) AS humidity,
     avg(pressure) AS pressure,
     avg(light_level) AS light_level,
-    avg(battery_voltage) AS battery_voltage,
-    avg(espnow_strength_dbm) AS espnow_strength_dbm
+    avg(esp32_temperature) AS esp32_temperature,
+    avg(wifi_strength) AS wifi_strength
 
 FROM outdoor
 GROUP BY bucket;
