@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# echo "Stopping Grafana..."
-# cd "$(dirname "$0")/grafana"
-# docker compose down
-# cd ..
+echo "Stopping Grafana..."
+cd "$(dirname "$0")/grafana"
+docker compose down
+cd ..
 
 echo "Stopping API..."
 cd api

@@ -1,8 +1,18 @@
-version: '3.8'
 services:
+  grafana-init:
+    image: alpine
+    container_name: grafana-init
+    user: root
+    volumes:
+      - ./grafana-storage:/var/lib/grafana
+    command: chown -R 472:472 /var/lib/grafana
+
   grafana:
     image: grafana/grafana-oss:latest
     container_name: grafana
+    depends_on:
+      grafana-init:
+        condition: service_completed_successfully
     ports:
       - "3000:3000"
     volumes:

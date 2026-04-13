@@ -4,10 +4,10 @@ cd "$(dirname "$0")"
 
 echo "Stopping and Removing All Containers... "
 
-# echo "Stopping Grafana..."
-# cd grafana
-# docker compose down
-# cd ..
+echo "Stopping Grafana..."
+cd grafana
+docker compose down
+cd ..
 
 echo "Stopping API..."
 cd api
@@ -31,9 +31,9 @@ cd api
 docker compose up -d --build
 cd ..
 
-# echo "Starting Grafana..."
-# cd grafana
-# docker compose up -d --build
-# cd ..
+echo "Starting Grafana..."
+cd grafana
+docker compose up -d --build
+cd ..
 
 echo -e "\nDone"
