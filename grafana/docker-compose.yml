@@ -1,31 +1,26 @@
 services:
-  grafana-init:
-    image: alpine
-    container_name: grafana-init
-    user: root
-    volumes:
-      - ./grafana-storage:/var/lib/grafana
-    command: chown -R 472:472 /var/lib/grafana
-
   grafana:
     image: grafana/grafana-oss:latest
     container_name: grafana
-    depends_on:
-      grafana-init:
-        condition: service_completed_successfully
+    networks:
+      - timescaledb_default
     ports:
       - "3000:3000"
     volumes:
-      - ./grafana-storage:/var/lib/grafana
+      - grafana_data:/var/lib/grafana
     restart: unless-stopped
-    networks:
-      - default
-      - timescaledb_net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 volumes:
-  grafana-storage:
+  grafana_data:
 
 networks:
-  timescaledb_net:
+  timescaledb_default:
     external: true
-    name: timescaledb_default

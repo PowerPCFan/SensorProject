@@ -1,3 +1,0 @@
-# Docker maps this to /var/lib/postgresql/data in the container
-# So this will contain the database files
-data/

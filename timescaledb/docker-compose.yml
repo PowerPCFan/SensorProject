@@ -2,6 +2,8 @@ services:
   timescaledb:
     image: timescale/timescaledb:latest-pg17
     container_name: timescaledb
+    networks:
+      - timescaledb_default
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -9,6 +11,19 @@ services:
     ports:
       - "${POSTGRES_PORT}:5432"
     volumes:
-      - ./data:/var/lib/postgresql/data
+      - timescaledb_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
+
+volumes:
+  timescaledb_data:
+
+networks:
+  timescaledb_default:
+    name: timescaledb_default

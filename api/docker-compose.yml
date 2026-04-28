@@ -4,18 +4,22 @@ services:
     container_name: api
     ports:
       - "8080:8080"
-    env_file:
-      - "../timescaledb/.env"
-      - ".env"
     restart: unless-stopped
+    # manual .env management for loading in python
     volumes:
       - ../timescaledb/.env:/timescaledb/.env:ro
       - ./.env:/app/.env:ro
     networks:
-      - default
-      - timescaledb_net
+      - timescaledb_default
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 networks:
-  timescaledb_net:
+  timescaledb_default:
     external: true
-    name: timescaledb_default
