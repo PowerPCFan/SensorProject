@@ -427,6 +427,7 @@ void loop() {
             if (isWarmupActive()) {
                 unsigned long warmupElapsedSeconds = (millis() - warmupStartMs) / 1000UL;
                 Serial.println("[LOOP] Warmup active (" + String(warmupElapsedSeconds) + "/" + String(WARMUP_SECONDS) + "s); skipping API upload");
+                delay(timerDelay / 2);  // a bit hacky but delay to not overload sensors and to not spam messages
                 return;
             }
 
