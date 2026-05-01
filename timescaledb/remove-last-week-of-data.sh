@@ -57,7 +57,7 @@ set -euo pipefail
         -p "$POSTGRES_PORT" \
         -U "$POSTGRES_USER" \
         -d "$POSTGRES_DB" \
-        -c "DELETE FROM $TABLE_NAME WHERE time < NOW() - INTERVAL '7 days';"
+        -c "DELETE FROM $TABLE_NAME WHERE time > NOW() - INTERVAL '7 days';"
 
     echo "Cleanup completed for table: $TABLE_NAME"
 )
