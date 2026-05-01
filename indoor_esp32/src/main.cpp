@@ -2,7 +2,9 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include "Adafruit_BME680.h"
+#include <SensirionI2CSgp40.h>
 #include <SensirionI2cScd4x.h>
+#include <VOCGasIndexAlgorithm.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -14,12 +16,22 @@ const unsigned long timerDelay = POST_DELAY_MS;  // build flag
 unsigned long lastReconnectAttempt = 0;
 const unsigned long reconnectDelay = 30 * 60 * 1000;
 
+#ifndef WARMUP_SECONDS
+#define WARMUP_SECONDS 0
+#endif
+
+const unsigned long warmupDelayMs = (unsigned long)WARMUP_SECONDS * 1000UL;
+unsigned long warmupStartMs = 0;
+
 const bool USE_BME680 = true;
 const bool USE_PMS5003 = true;
 const bool USE_SCD41 = true;
+const bool USE_SGP40 = true;
 
-TwoWire bmeWire(1);
-Adafruit_BME680 bme(&bmeWire);
+TwoWire secondaryWire(1);
+Adafruit_BME680 bme(&secondaryWire);
+SensirionI2CSgp40 sgp40;
+VOCGasIndexAlgorithm vocAlgorithm;
 SensirionI2cScd4x scd4x;
 HardwareSerial pmsSerial(2);
 
@@ -75,21 +87,47 @@ bool readPMSdata(HardwareSerial *s, PMSData &data) {
 
 bool bme680Ready = false;
 uint8_t bme680Address = 0;
+float lastBmeTemperature = 25.0f;
+float lastBmeHumidity = 50.0f;
+bool bme680HasReading = false;
 
-// fb = fallback btw
-const float FB_TEMP = 33.71479f;
-const float FB_HUM = 100.0f;
-const float FB_PRESS = 673.47f;
-const float FB_GAS = 0.0f;
+bool sgp40Ready = false;
+bool sgp40HasReading = false;
+uint16_t sgp40LastRawSignal = 0;
 
-bool sim(float a, float b, float eps = 0.001f) { return fabsf(a - b) <= eps; }
+bool isWarmupActive() {
+    if (warmupDelayMs <= 0) return false;
+    return (millis() - warmupStartMs) < warmupDelayMs;
+}
+
+bool similar(float a, float b, float eps = 0.001f) {
+    return fabsf(a - b) <= eps;
+}
 
 bool isFallback(float temp, float hum, float press, float gas) {
-    return sim(temp, FB_TEMP) && sim(hum, FB_HUM) && sim(press, FB_PRESS) && sim(gas, FB_GAS);
+    return similar(temp, 33.71479f) && similar(hum, 100.0f) && similar(press, 673.47f) && similar(gas, 0.0f);
+}
+
+uint16_t sgp40TemperatureToTicks(float temperature) {
+    // ticks = (degC + 45) * 65535 / 175
+
+    if (temperature < -45.0f) { temperature = -45.0f; }
+    if (temperature > 130.0f) { temperature = 130.0f; }
+
+    return (uint16_t)((temperature + 45.0f) * 65535.0f / 175.0f);
+}
+
+uint16_t sgp40HumidityToTicks(float humidity) {
+    // ticks = %RH * 65535 / 100
+
+    if (humidity < 0.0f) { humidity = 0.0f; }
+    if (humidity > 100.0f) { humidity = 100.0f; }
+
+    return (uint16_t)(humidity * 65535.0f / 100.0f);
 }
 
 void setupBME680() {
-    bmeWire.begin(25, 26, 100000);
+    secondaryWire.begin(25, 26, 100000);
 
     if (!bme.begin(0x76)) {
         // 0x76 is invalid, try 0x77
@@ -99,11 +137,11 @@ void setupBME680() {
             return;
         } else {
             bme680Address = 0x77;
-            Serial.println("[BME680] BME680 found at address 0x77");
+            Serial.println("[BME680] BME680 found (0x77)");
         }
     } else {
         bme680Address = 0x76;
-        Serial.println("[BME680] BME680 found at address 0x76");
+        Serial.println("[BME680] BME680 found (0x76)");
     }
 
     bme.setTemperatureOversampling(BME680_OS_8X);
@@ -150,10 +188,50 @@ void addBME680Json(JsonDocument &doc) {
         }
     }
 
+    lastBmeTemperature = temperature;
+    lastBmeHumidity = humidity;
+    bme680HasReading = true;
+
     doc["temperature"] = temperature;
     doc["humidity"] = humidity;
     doc["pressure"] = pressure;
     doc["gas"] = gas;
+}
+
+void setupSGP40() {
+    sgp40.begin(secondaryWire);
+    Serial.println("[SGP40] SGP40 ready");
+    sgp40Ready = true;
+
+    // self test - uncomment to run
+    // uint16_t selfTestResult = 0;
+    // uint16_t error = sgp40.executeSelfTest(selfTestResult);
+    // Serial.println(String("[SGP40] Self test result (0xD400 = pass): 0x") + String(selfTestResult, HEX) + String(" (error occurred: ") + String(error) + String(")"));
+}
+
+void addSGP40Json(JsonDocument &doc) {
+    if (!sgp40Ready) return;
+
+    uint16_t humidityTicks = bme680HasReading ? sgp40HumidityToTicks(lastBmeHumidity) : 0x8000;
+    uint16_t temperatureTicks = bme680HasReading ? sgp40TemperatureToTicks(lastBmeTemperature) : 0x6666;
+
+    uint16_t rawSignal = 0;
+    uint16_t error = sgp40.measureRawSignal(humidityTicks, temperatureTicks, rawSignal);
+
+    if (error) {
+        Serial.println(String("[SGP40] Reading failed: ") + String(error));
+        return;
+    }
+
+    sgp40LastRawSignal = rawSignal;
+    sgp40HasReading = true;
+
+    int32_t vocIndex = vocAlgorithm.process(rawSignal);
+    if (vocIndex > 0) {
+        doc["vocs"] = vocIndex;
+    } else {
+        Serial.println(String("[SGP40] VOC algorithm returned invalid index: `") + String(vocIndex) + "`. This can either indicate the sensor warming up, an error in the algorithm, or unexpectedly clean air. Raw value: " + String(rawSignal));
+    }
 }
 
 void setupPMS5003() {
@@ -234,10 +312,9 @@ void setupSCD41() {
         scd41Ready = false;
         return;
     }
-    Serial.println(String("[SCD41] SCD41 detected, serial: ") + String((unsigned long)(serialNumber >> 32), HEX) + String((unsigned long)(serialNumber & 0xFFFFFFFF), HEX));
+    Serial.println(String("[SCD41] SCD41 ready (serial: ") + String((unsigned long)(serialNumber >> 32), HEX) + String((unsigned long)(serialNumber & 0xFFFFFFFF), HEX) + String(")"));
 
     // self test - uncomment to run
-
     // uint16_t sensorStatus = 0;
     // error = scd4x.performSelfTest(sensorStatus);
     // Serial.println(String("[SCD41] Self test result: 0x") + String(sensorStatus, HEX) + String(error ? String(", error: ") + String(error) : ", no error"));
@@ -315,6 +392,12 @@ void setup() {
     if (USE_BME680) setupBME680();
     if (USE_PMS5003) setupPMS5003();
     if (USE_SCD41) setupSCD41();
+    if (USE_SGP40) setupSGP40();
+
+    warmupStartMs = millis();
+    if (warmupDelayMs > 0) {
+        Serial.println("[SETUP] Warmup enabled for " + String(WARMUP_SECONDS) + "s; API uploads will be paused during this time to stabilize measurements");
+    }
 
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     const char* spinner[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
@@ -333,16 +416,23 @@ void loop() {
     if (USE_SCD41) pollSCD41();
 
     if ((millis() - lastTime) > timerDelay) {
-        lastTime = millis();
-
         if (WiFi.status() == WL_CONNECTED) {
             JsonDocument doc;
 
             if (USE_BME680) addBME680Json(doc);
+            if (USE_SGP40) addSGP40Json(doc);
             if (USE_PMS5003) addPMS5003Json(doc);
             if (USE_SCD41) addSCD41Json(doc);
 
+            if (isWarmupActive()) {
+                unsigned long warmupElapsedSeconds = (millis() - warmupStartMs) / 1000UL;
+                Serial.println("[LOOP] Warmup active (" + String(warmupElapsedSeconds) + "/" + String(WARMUP_SECONDS) + "s); skipping API upload");
+                return;
+            }
+
             doc["wifi_strength"] = WiFi.RSSI();
+
+            lastTime = millis();
 
             String payload;
             serializeJson(doc, payload);
