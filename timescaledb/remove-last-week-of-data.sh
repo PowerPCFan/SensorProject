@@ -34,12 +34,13 @@ set -euo pipefail
     }
 
     BACKUP_FILE="timescaledb_backup_$(date +"%Y%m%d%H%M%S").sql"
+    export PGPASSWORD="$POSTGRES_PASSWORD"
 
     pg_dump \
-        -h "$TIMESCALEDB_HOST" \
-        -p "$TIMESCALEDB_PORT" \
-        -U "$TIMESCALEDB_USER" \
-        -d "$TIMESCALEDB_DB" \
+        -h "$POSTGRES_HOST" \
+        -p "$POSTGRES_PORT" \
+        -U "$POSTGRES_USER" \
+        -d "$POSTGRES_DB" \
         -F c -b -v \
         -f "$BACKUP_FILE" || {
             echo "Backup failed. Aborting delete."
@@ -49,10 +50,10 @@ set -euo pipefail
     echo "Backup created: $BACKUP_FILE"
 
     psql \
-        -h "$TIMESCALEDB_HOST" \
-        -p "$TIMESCALEDB_PORT" \
-        -U "$TIMESCALEDB_USER" \
-        -d "$TIMESCALEDB_DB" \
+        -h "$POSTGRES_HOST" \
+        -p "$POSTGRES_PORT" \
+        -U "$POSTGRES_USER" \
+        -d "$POSTGRES_DB" \
         <<SQL
 BEGIN;
 
