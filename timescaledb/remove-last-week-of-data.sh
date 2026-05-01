@@ -1,5 +1,4 @@
 #!/bin/bash
-# Remove last week of data from TimescaleDB (safe version)
 
 set -euo pipefail
 
@@ -16,12 +15,10 @@ set -euo pipefail
         TABLE_NAME="indoor"
     fi
 
-    if [[ ! "$TABLE_NAME" =~ ^[a-zA-Z0-9_]+$ ]]; then
-        echo "Invalid table name: $TABLE_NAME"
+    if [[ "$TABLE_NAME" != "indoor" && "$TABLE_NAME" != "outdoor" ]]; then
+        echo "Only 'indoor' or 'outdoor' allowed"
         exit 1
     fi
-
-    ONE_WEEK_AGO=$(date -d "7 days ago" +"%Y-%m-%d %H:%M:%S")
 
     command -v pg_dump >/dev/null 2>&1 || {
         echo "pg_dump not found. Install PostgreSQL client tools."
@@ -33,10 +30,9 @@ set -euo pipefail
         exit 1
     }
 
-    BACKUP_FILE="timescaledb_backup_$(date +"%Y%m%d%H%M%S").sql"
-    export PGPASSWORD="$POSTGRES_PASSWORD"
+    BACKUP_FILE="timescaledb_backup_$(date +"%Y%m%d%H%M%S").dump"
 
-    pg_dump \
+    PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
         -h "localhost" \
         -p "$POSTGRES_PORT" \
         -U "$POSTGRES_USER" \
@@ -49,22 +45,12 @@ set -euo pipefail
 
     echo "Backup created: $BACKUP_FILE"
 
-    psql \
+    PGPASSWORD="$POSTGRES_PASSWORD" psql \
         -h "localhost" \
         -p "$POSTGRES_PORT" \
         -U "$POSTGRES_USER" \
         -d "$POSTGRES_DB" \
-        <<SQL
-BEGIN;
-
-DELETE FROM "$TABLE_NAME"
-WHERE time < '$ONE_WEEK_AGO';
-
-DELETE FROM "${TABLE_NAME}_condensed"
-WHERE time < '$ONE_WEEK_AGO';
-
-COMMIT;
-SQL
+        -c "SELECT drop_chunks(INTERVAL '7 days', '$TABLE_NAME');"
 
     echo "Cleanup completed for table: $TABLE_NAME"
 )
