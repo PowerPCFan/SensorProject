@@ -45,12 +45,19 @@ set -euo pipefail
 
     echo "Backup created: $BACKUP_FILE"
 
+    # PGPASSWORD="$POSTGRES_PASSWORD" psql \
+    #     -h "localhost" \
+    #     -p "$POSTGRES_PORT" \
+    #     -U "$POSTGRES_USER" \
+    #     -d "$POSTGRES_DB" \
+    #     -c "SELECT drop_chunks('$TABLE_NAME', INTERVAL '7 days');"
+
     PGPASSWORD="$POSTGRES_PASSWORD" psql \
         -h "localhost" \
         -p "$POSTGRES_PORT" \
         -U "$POSTGRES_USER" \
         -d "$POSTGRES_DB" \
-        -c "SELECT drop_chunks('$TABLE_NAME', INTERVAL '7 days');"
+        -c "DELETE FROM $TABLE_NAME WHERE time < NOW() - INTERVAL '7 days';"
 
     echo "Cleanup completed for table: $TABLE_NAME"
 )
