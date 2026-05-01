@@ -37,7 +37,7 @@ set -euo pipefail
     export PGPASSWORD="$POSTGRES_PASSWORD"
 
     pg_dump \
-        -h "$POSTGRES_HOST" \
+        -h "localhost" \
         -p "$POSTGRES_PORT" \
         -U "$POSTGRES_USER" \
         -d "$POSTGRES_DB" \
@@ -50,7 +50,7 @@ set -euo pipefail
     echo "Backup created: $BACKUP_FILE"
 
     psql \
-        -h "$POSTGRES_HOST" \
+        -h "localhost" \
         -p "$POSTGRES_PORT" \
         -U "$POSTGRES_USER" \
         -d "$POSTGRES_DB" \
@@ -58,10 +58,10 @@ set -euo pipefail
 BEGIN;
 
 DELETE FROM "$TABLE_NAME"
-WHERE timestamp < '$ONE_WEEK_AGO';
+WHERE time < '$ONE_WEEK_AGO';
 
 DELETE FROM "${TABLE_NAME}_condensed"
-WHERE timestamp < '$ONE_WEEK_AGO';
+WHERE time < '$ONE_WEEK_AGO';
 
 COMMIT;
 SQL
