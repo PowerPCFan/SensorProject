@@ -50,7 +50,7 @@ set -euo pipefail
         -p "$POSTGRES_PORT" \
         -U "$POSTGRES_USER" \
         -d "$POSTGRES_DB" \
-        -c "SELECT drop_chunks(INTERVAL '7 days', '$TABLE_NAME');"
+        -c "SELECT drop_chunks('$TABLE_NAME', INTERVAL '7 days');"
 
     echo "Cleanup completed for table: $TABLE_NAME"
 )
