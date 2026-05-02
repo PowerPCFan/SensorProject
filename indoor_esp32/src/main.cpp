@@ -29,6 +29,7 @@ const unsigned long reconnectDelay = 30 * 60 * 1000;
 
 const unsigned long warmupDelayMs = (unsigned long)WARMUP_SECONDS * 1000UL;
 unsigned long warmupStartMs = 0;
+unsigned long warmupLastLogMs = 0;
 
 const bool USE_BME680 = true;
 const bool USE_PMS5003 = true;
@@ -151,7 +152,20 @@ uint16_t safeSubtract(uint16_t a, uint16_t b) {
 bool readPMSdata(HardwareSerial *s, PMSData &data) {
     if (s -> available() < 32) return false;
 
-    while (s -> available() && s -> peek() != 0x42) s -> read();
+    // Frame sync: find 0x42, but validate 0x4D follows before committing
+    while (s -> available() >= 2) {
+        if (s -> peek() == 0x42) {
+            // Peek ahead to check for 0x4D without consuming
+            uint8_t byte1 = s -> read();
+            if (s -> available() > 0 && s -> peek() == 0x4D) {
+                // Valid header start found; put byte1 back and prepare to read full frame
+                break;
+            }
+            // False alarm; continue searching
+        } else {
+            s -> read();
+        }
+    }
     if (s -> available() < 32) return false;
 
     uint8_t buffer[32];
@@ -533,6 +547,16 @@ void loop() {
     if (USE_PMS5003) pollPMS5003();
     if (USE_SCD41) pollSCD41();
 
+    if (isWarmupActive()) {
+        if ((millis() - warmupLastLogMs) > 5000) {
+            warmupLastLogMs = millis();
+            unsigned long warmupElapsedSeconds = (millis() - warmupStartMs) / 1000UL;
+            MySerial.println("[LOOP] Warmup active (" + String(warmupElapsedSeconds) + "/" + String(WARMUP_SECONDS) + "s); skipping API upload");
+        }
+        delay(timerDelay / 2);
+        return;
+    }
+
     if ((millis() - lastTime) > timerDelay) {
         if (WiFi.status() == WL_CONNECTED) {
             JsonDocument doc;
@@ -541,13 +565,6 @@ void loop() {
             if (USE_SGP40) addSGP40Json(doc);
             if (USE_PMS5003) addPMS5003Json(doc);
             if (USE_SCD41) addSCD41Json(doc);
-
-            if (isWarmupActive()) {
-                unsigned long warmupElapsedSeconds = (millis() - warmupStartMs) / 1000UL;
-                MySerial.println("[LOOP] Warmup active (" + String(warmupElapsedSeconds) + "/" + String(WARMUP_SECONDS) + "s); skipping API upload");
-                delay(timerDelay / 2);  // a bit hacky but delay to not overload sensors and to not spam messages
-                return;
-            }
 
             doc["wifi_strength"] = WiFi.RSSI();
 
