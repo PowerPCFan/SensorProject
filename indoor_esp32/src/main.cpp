@@ -36,6 +36,7 @@ const unsigned long startupDelayMs = STARTUP_DELAY;
 const unsigned long warmupDelayMs = (unsigned long)WARMUP_SECONDS * 1000UL;
 unsigned long warmupStartMs = 0;
 unsigned long warmupLastLogMs = 0;
+unsigned long warmupLastSampleMs = 0;
 
 const bool USE_BME680 = true;
 const bool USE_PMS5003 = true;
@@ -588,7 +589,19 @@ void loop() {
             unsigned long warmupElapsedSeconds = (millis() - warmupStartMs) / 1000UL;
             MySerial.println("[LOOP] Warmup active (" + String(warmupElapsedSeconds) + "/" + String(WARMUP_SECONDS) + "s); skipping API upload");
         }
-        delay(timerDelay / 2);
+        if ((millis() - warmupLastSampleMs) > (timerDelay / 2)) {
+            warmupLastSampleMs = millis();
+            JsonDocument warmupDoc;
+
+            if (USE_BME680) addBME680Json(warmupDoc);
+            if (USE_SGP40) addSGP40Json(warmupDoc);
+            if (USE_PMS5003) addPMS5003Json(warmupDoc);
+            if (USE_SCD41) {
+                pollSCD41();
+                addSCD41Json(warmupDoc);
+            }
+        }
+        delay(50);
         return;
     }
 
