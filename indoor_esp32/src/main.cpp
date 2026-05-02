@@ -347,7 +347,8 @@ void addSGP40Json(JsonDocument &doc) {
     if (vocIndex > 0) {
         doc["vocs"] = vocIndex;
     } else {
-        MySerial.println(String("[SGP40] VOC algorithm returned invalid index: `") + String(vocIndex) + "`. This can either indicate the sensor warming up, an error in the algorithm, or unexpectedly clean air. Raw value: " + String(rawSignal));
+        // MySerial.println(String("[SGP40] VOC algorithm returned invalid index: `") + String(vocIndex) + "`. This can either indicate the sensor warming up, an error in the algorithm, or unexpectedly clean air. Raw value: " + String(rawSignal));
+        MySerial.println(String("[SGP40] VOC algorithm returned invalid index: `") + String(vocIndex) + "`, sensor likely warming up or training - raw value: " + String(rawSignal));
     }
 }
 
