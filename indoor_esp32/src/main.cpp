@@ -18,6 +18,14 @@ unsigned long lastTime = 0;
 const unsigned long timerDelay = POST_DELAY_MS;  // build flag
 unsigned long lastReconnectAttempt = 0;
 const unsigned long reconnectDelay = 30 * 60 * 1000;
+unsigned long lastWifiDisconnectLogMs = 0;
+unsigned long lastPmsChecksumLogMs = 0;
+unsigned long lastBme680ReadFailLogMs = 0;
+unsigned long lastBme680FallbackLogMs = 0;
+unsigned long lastBme680RetryFailLogMs = 0;
+unsigned long lastBme680RetryFallbackLogMs = 0;
+unsigned long lastSgp40ReadFailLogMs = 0;
+unsigned long lastSgp40InvalidLogMs = 0;
 
 #ifndef STARTUP_DELAY
 #define STARTUP_DELAY 1000  // 1 second default
@@ -181,7 +189,10 @@ bool readPMSdata(HardwareSerial *s, PMSData &data) {
         uint16_t checksum = ((uint16_t)buffer[30] << 8) | buffer[31];
 
         if (sum != checksum) {
-            MySerial.println("[PMS5003] checksum mismatch");
+            if ((millis() - lastPmsChecksumLogMs) > 5000) {
+                MySerial.println("[PMS5003] checksum mismatch");
+                lastPmsChecksumLogMs = millis();
+            }
             return false;
         }
 
@@ -274,7 +285,10 @@ void addBME680Json(JsonDocument &doc) {
     if (!bme680Ready) return;
 
     if (!bme.performReading()) {
-        MySerial.println("[BME680] Reading failed");
+        if ((millis() - lastBme680ReadFailLogMs) > 5000) {
+            MySerial.println("[BME680] Reading failed");
+            lastBme680ReadFailLogMs = millis();
+        }
         return;
     }
 
@@ -284,7 +298,10 @@ void addBME680Json(JsonDocument &doc) {
     float gas = bme.gas_resistance / 1000.0f;
 
     if (isFallback(temperature, humidity, pressure, gas)) {
-        MySerial.println("[BME680] Fallback values detected, retrying sensor read");
+        if ((millis() - lastBme680FallbackLogMs) > 5000) {
+            MySerial.println("[BME680] Fallback values detected, retrying sensor read");
+            lastBme680FallbackLogMs = millis();
+        }
         delay(250);
 
         if (bme.begin(bme680Address) && bme.performReading()) {
@@ -294,13 +311,19 @@ void addBME680Json(JsonDocument &doc) {
             gas = bme.gas_resistance / 1000.0f;
 
             if (isFallback(temperature, humidity, pressure, gas)) {
-                MySerial.println("[BME680] Retry succeeded but returned fallback values again, giving up on this reading");
+                if ((millis() - lastBme680RetryFallbackLogMs) > 5000) {
+                    MySerial.println("[BME680] Retry succeeded but returned fallback values again, giving up on this reading");
+                    lastBme680RetryFallbackLogMs = millis();
+                }
                 return;
             } else {
                 MySerial.println("[BME680] Retry successful");
             }
         } else {
-            MySerial.println("[BME680] Retry failed");
+            if ((millis() - lastBme680RetryFailLogMs) > 5000) {
+                MySerial.println("[BME680] Retry failed");
+                lastBme680RetryFailLogMs = millis();
+            }
             return;
         }
     }
@@ -336,7 +359,10 @@ void addSGP40Json(JsonDocument &doc) {
     uint16_t error = sgp40.measureRawSignal(humidityTicks, temperatureTicks, rawSignal);
 
     if (error) {
-        MySerial.println(String("[SGP40] Reading failed: ") + String(error));
+        if ((millis() - lastSgp40ReadFailLogMs) > 5000) {
+            MySerial.println(String("[SGP40] Reading failed: ") + String(error));
+            lastSgp40ReadFailLogMs = millis();
+        }
         return;
     }
 
@@ -347,8 +373,10 @@ void addSGP40Json(JsonDocument &doc) {
     if (vocIndex > 0) {
         doc["vocs"] = vocIndex;
     } else {
-        // MySerial.println(String("[SGP40] VOC algorithm returned invalid index: `") + String(vocIndex) + "`. This can either indicate the sensor warming up, an error in the algorithm, or unexpectedly clean air. Raw value: " + String(rawSignal));
-        MySerial.println(String("[SGP40] VOC algorithm returned invalid index: `") + String(vocIndex) + "`, sensor likely warming up or training - raw value: " + String(rawSignal));
+        if ((millis() - lastSgp40InvalidLogMs) > 5000) {
+            MySerial.println(String("[SGP40] VOC algorithm returned invalid index: `") + String(vocIndex) + "`, sensor likely warming up or training - raw value: " + String(rawSignal));
+            lastSgp40InvalidLogMs = millis();
+        }
     }
 }
 
@@ -634,7 +662,10 @@ void loop() {
 
             MySerial.println("\n[LOOP] Payload sent (HTTP " + String(code) + "): " + payload);
         } else {
-            MySerial.println("[LOOP] Wi-Fi disconnected, skipping upload");
+            if ((millis() - lastWifiDisconnectLogMs) > 5000) {
+                MySerial.println("[LOOP] Wi-Fi disconnected, skipping upload");
+                lastWifiDisconnectLogMs = millis();
+            }
             if ((millis() - lastReconnectAttempt) > reconnectDelay) {
                 lastReconnectAttempt = millis();
                 MySerial.println("[LOOP] Attempting to reconnect to Wi-Fi...");
