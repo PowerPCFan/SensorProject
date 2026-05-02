@@ -152,48 +152,47 @@ uint16_t safeSubtract(uint16_t a, uint16_t b) {
 bool readPMSdata(HardwareSerial *s, PMSData &data) {
     if (s -> available() < 32) return false;
 
-    // Frame sync: find 0x42, but validate 0x4D follows before committing
+    // Frame sync: consume bytes until we find header 0x42 0x4D.
     while (s -> available() >= 2) {
-        if (s -> peek() == 0x42) {
-            // Peek ahead to check for 0x4D without consuming
-            uint8_t byte1 = s -> read();
-            if (s -> available() > 0 && s -> peek() == 0x4D) {
-                // Valid header start found; put byte1 back and prepare to read full frame
-                break;
-            }
-            // False alarm; continue searching
-        } else {
-            s -> read();
+        uint8_t b = s -> read();
+        if (b != 0x42) continue;
+
+        if (s -> peek() != 0x4D) {
+            continue;
         }
+
+        uint8_t buffer[32];
+        buffer[0] = 0x42;
+        size_t got = s -> readBytes(&buffer[1], 31);
+        if (got != 31) return false;
+
+        uint16_t frameLen = ((uint16_t)buffer[2] << 8) | buffer[3];
+        if (frameLen != 28) return false;
+
+        uint16_t sum = 0;
+        for (uint8_t i = 0; i < 30; i++) sum += buffer[i];
+        uint16_t checksum = ((uint16_t)buffer[30] << 8) | buffer[31];
+
+        if (sum != checksum) {
+            MySerial.println("[PMS5003] checksum mismatch");
+            return false;
+        }
+
+        data.pm1_0 = (float)((buffer[10] << 8) | buffer[11]);
+        data.pm2_5 = (float)((buffer[12] << 8) | buffer[13]);
+        data.pm10_0 = (float)((buffer[14] << 8) | buffer[15]);
+
+        data.p_03um  = (buffer[16] << 8) | buffer[17];
+        data.p_05um  = (buffer[18] << 8) | buffer[19];
+        data.p_10um  = (buffer[20] << 8) | buffer[21];
+        data.p_25um  = (buffer[22] << 8) | buffer[23];
+        data.p_50um  = (buffer[24] << 8) | buffer[25];
+        data.p_100um = (buffer[26] << 8) | buffer[27];
+
+        return true;
     }
-    if (s -> available() < 32) return false;
 
-    uint8_t buffer[32];
-    s -> readBytes(buffer, 32);
-
-    if (buffer[0] != 0x42 || buffer[1] != 0x4D) return false;
-
-    uint16_t sum = 0;
-    for (uint8_t i = 0; i < 30; i++) sum += buffer[i];
-    uint16_t checksum = ((uint16_t)buffer[30] << 8) | buffer[31];
-
-    if (sum != checksum) {
-        MySerial.println("[PMS5003] checksum mismatch");
-        return false;
-    }
-
-    data.pm1_0 = (float)((buffer[10] << 8) | buffer[11]);
-    data.pm2_5 = (float)((buffer[12] << 8) | buffer[13]);
-    data.pm10_0 = (float)((buffer[14] << 8) | buffer[15]);
-
-    data.p_03um  = (buffer[16] << 8) | buffer[17];
-    data.p_05um  = (buffer[18] << 8) | buffer[19];
-    data.p_10um  = (buffer[20] << 8) | buffer[21];
-    data.p_25um  = (buffer[22] << 8) | buffer[23];
-    data.p_50um  = (buffer[24] << 8) | buffer[25];
-    data.p_100um = (buffer[26] << 8) | buffer[27];
-
-    return true;
+    return false;
 }
 
 bool bme680Ready = false;
