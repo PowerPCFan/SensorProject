@@ -10,6 +10,9 @@
 #include <ArduinoJson.h>
 #include <HardwareSerial.h>
 #include <math.h>
+#include "esp_system.h"
+#include "esp_chip_info.h"
+#include "esp_mac.h"
 
 unsigned long lastTime = 0;
 const unsigned long timerDelay = POST_DELAY_MS;  // build flag
@@ -18,6 +21,10 @@ const unsigned long reconnectDelay = 30 * 60 * 1000;
 
 #ifndef WARMUP_SECONDS
 #define WARMUP_SECONDS 0
+#endif
+
+#ifndef USE_BLUETOOTH_SERIAL
+#define USE_BLUETOOTH_SERIAL 0
 #endif
 
 const unsigned long warmupDelayMs = (unsigned long)WARMUP_SECONDS * 1000UL;
@@ -34,6 +41,96 @@ SensirionI2CSgp40 sgp40;
 VOCGasIndexAlgorithm vocAlgorithm;
 SensirionI2cScd4x scd4x;
 HardwareSerial pmsSerial(2);
+
+#if USE_BLUETOOTH_SERIAL
+#include <NimBLEDevice.h>
+
+static const char* NUS_SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
+
+class BridgeServerCallbacks : public NimBLEServerCallbacks {
+public:
+    void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
+        (void)pServer;
+        (void)connInfo;
+        (void)reason;
+        NimBLEDevice::startAdvertising();
+    }
+};
+
+class SerialBridge : public Print {
+public:
+    explicit SerialBridge(HardwareSerial &usb) : usbSerial(usb) {}
+
+    bool begin(unsigned long baudRate) {
+        usbSerial.begin(baudRate);
+        return true;
+    }
+
+    bool enableBluetooth(const char *deviceName) {
+        if (bleEnabled) return true;
+
+        NimBLEDevice::init(deviceName);
+        NimBLEServer* pServer = NimBLEDevice::createServer();
+        pServer -> setCallbacks(new BridgeServerCallbacks());
+        pServer -> advertiseOnDisconnect(true);
+        NimBLEService* pService = pServer -> createService(NUS_SERVICE_UUID);
+
+        pTxChar = pService -> createCharacteristic("6E400003-B5A3-F393-E0A9-E50E24DCCA9E", NIMBLE_PROPERTY::NOTIFY);
+
+        pServer -> start();
+
+        NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+        adv -> setName(deviceName);
+        adv -> enableScanResponse(true);
+        adv -> addServiceUUID(NUS_SERVICE_UUID);
+        adv -> start();
+
+        bleEnabled = true;
+        return true;
+    }
+
+    void endBluetooth() {
+        if (!bleEnabled) return;
+        NimBLEDevice::deinit(true);
+        bleEnabled = false;
+    }
+
+    size_t write(uint8_t byte) override {
+        size_t written = usbSerial.write(byte);
+        if (bleEnabled && pTxChar) {
+            uint8_t b = byte;
+            pTxChar -> setValue(&b, 1);
+            pTxChar -> notify();
+        }
+        return written;
+    }
+
+    size_t write(const uint8_t *buffer, size_t size) override {
+        size_t written = usbSerial.write(buffer, size);
+        if (bleEnabled && pTxChar) {
+            pTxChar -> setValue(buffer, size);
+            pTxChar -> notify();
+        }
+        return written;
+    }
+
+    using Print::write;
+
+private:
+    HardwareSerial &usbSerial;
+    NimBLEServer* pServer = nullptr;
+    NimBLEService* pService = nullptr;
+    NimBLECharacteristic* pTxChar = nullptr;
+    bool bleEnabled = false;
+};
+
+SerialBridge SerialBridgeInstance(::Serial);
+#define MySerial SerialBridgeInstance
+#endif
+
+#ifndef MySerial
+#define MySerial Serial
+#endif
 
 struct PMSData {
     float pm1_0 = 0, pm2_5 = 0, pm10_0 = 0;
@@ -52,13 +149,13 @@ uint16_t safeSubtract(uint16_t a, uint16_t b) {
 }
 
 bool readPMSdata(HardwareSerial *s, PMSData &data) {
-    if (s->available() < 32) return false;
+    if (s -> available() < 32) return false;
 
-    while (s->available() && s->peek() != 0x42) s->read();
-    if (s->available() < 32) return false;
+    while (s -> available() && s -> peek() != 0x42) s -> read();
+    if (s -> available() < 32) return false;
 
     uint8_t buffer[32];
-    s->readBytes(buffer, 32);
+    s -> readBytes(buffer, 32);
 
     if (buffer[0] != 0x42 || buffer[1] != 0x4D) return false;
 
@@ -67,7 +164,7 @@ bool readPMSdata(HardwareSerial *s, PMSData &data) {
     uint16_t checksum = ((uint16_t)buffer[30] << 8) | buffer[31];
 
     if (sum != checksum) {
-        Serial.println("[PMS5003] checksum mismatch");
+        MySerial.println("[PMS5003] checksum mismatch");
         return false;
     }
 
@@ -132,16 +229,16 @@ void setupBME680() {
     if (!bme.begin(0x76)) {
         // 0x76 is invalid, try 0x77
         if (!bme.begin(0x77)) {
-            Serial.println("[BME680] BME680 not found, disabling BME680 module");
+            MySerial.println("[BME680] BME680 not found, disabling BME680 module");
             bme680Ready = false;
             return;
         } else {
             bme680Address = 0x77;
-            Serial.println("[BME680] BME680 found (0x77)");
+            MySerial.println("[BME680] BME680 found (0x77)");
         }
     } else {
         bme680Address = 0x76;
-        Serial.println("[BME680] BME680 found (0x76)");
+        MySerial.println("[BME680] BME680 found (0x76)");
     }
 
     bme.setTemperatureOversampling(BME680_OS_8X);
@@ -150,14 +247,14 @@ void setupBME680() {
     bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
     bme.setGasHeater(320, 150);
     bme680Ready = true;
-    Serial.println("[BME680] BME680 ready");
+    MySerial.println("[BME680] BME680 ready");
 }
 
 void addBME680Json(JsonDocument &doc) {
     if (!bme680Ready) return;
 
     if (!bme.performReading()) {
-        Serial.println("[BME680] Reading failed");
+        MySerial.println("[BME680] Reading failed");
         return;
     }
 
@@ -167,7 +264,7 @@ void addBME680Json(JsonDocument &doc) {
     float gas = bme.gas_resistance / 1000.0f;
 
     if (isFallback(temperature, humidity, pressure, gas)) {
-        Serial.println("[BME680] Fallback values detected, retrying sensor read");
+        MySerial.println("[BME680] Fallback values detected, retrying sensor read");
         delay(250);
 
         if (bme.begin(bme680Address) && bme.performReading()) {
@@ -177,13 +274,13 @@ void addBME680Json(JsonDocument &doc) {
             gas = bme.gas_resistance / 1000.0f;
 
             if (isFallback(temperature, humidity, pressure, gas)) {
-                Serial.println("[BME680] Retry succeeded but returned fallback values again, giving up on this reading");
+                MySerial.println("[BME680] Retry succeeded but returned fallback values again, giving up on this reading");
                 return;
             } else {
-                Serial.println("[BME680] Retry successful");
+                MySerial.println("[BME680] Retry successful");
             }
         } else {
-            Serial.println("[BME680] Retry failed");
+            MySerial.println("[BME680] Retry failed");
             return;
         }
     }
@@ -200,13 +297,13 @@ void addBME680Json(JsonDocument &doc) {
 
 void setupSGP40() {
     sgp40.begin(secondaryWire);
-    Serial.println("[SGP40] SGP40 ready");
+    MySerial.println("[SGP40] SGP40 ready");
     sgp40Ready = true;
 
     // self test - uncomment to run
     // uint16_t selfTestResult = 0;
     // uint16_t error = sgp40.executeSelfTest(selfTestResult);
-    // Serial.println(String("[SGP40] Self test result (0xD400 = pass): 0x") + String(selfTestResult, HEX) + String(" (error occurred: ") + String(error) + String(")"));
+    // MySerial.println(String("[SGP40] Self test result (0xD400 = pass): 0x") + String(selfTestResult, HEX) + String(" (error occurred: ") + String(error) + String(")"));
 }
 
 void addSGP40Json(JsonDocument &doc) {
@@ -219,7 +316,7 @@ void addSGP40Json(JsonDocument &doc) {
     uint16_t error = sgp40.measureRawSignal(humidityTicks, temperatureTicks, rawSignal);
 
     if (error) {
-        Serial.println(String("[SGP40] Reading failed: ") + String(error));
+        MySerial.println(String("[SGP40] Reading failed: ") + String(error));
         return;
     }
 
@@ -230,7 +327,7 @@ void addSGP40Json(JsonDocument &doc) {
     if (vocIndex > 0) {
         doc["vocs"] = vocIndex;
     } else {
-        Serial.println(String("[SGP40] VOC algorithm returned invalid index: `") + String(vocIndex) + "`. This can either indicate the sensor warming up, an error in the algorithm, or unexpectedly clean air. Raw value: " + String(rawSignal));
+        MySerial.println(String("[SGP40] VOC algorithm returned invalid index: `") + String(vocIndex) + "`. This can either indicate the sensor warming up, an error in the algorithm, or unexpectedly clean air. Raw value: " + String(rawSignal));
     }
 }
 
@@ -285,21 +382,21 @@ void setupSCD41() {
     error = scd4x.wakeUp();
     if (error) {
         errorToString(error, errorMessage, sizeof(errorMessage));
-        Serial.println(String("[SCD41] Failed to wake up: ") + errorMessage);
+        MySerial.println(String("[SCD41] Failed to wake up: ") + errorMessage);
     }
 
     error = scd4x.stopPeriodicMeasurement();
     delay(500);
     if (error) {
         errorToString(error, errorMessage, sizeof(errorMessage));
-        Serial.println(String("[SCD41] Failed to stop periodic measurement: ") + errorMessage);
+        MySerial.println(String("[SCD41] Failed to stop periodic measurement: ") + errorMessage);
     }
 
     error = scd4x.reinit();
     if (error) {
         errorToString(error, errorMessage, sizeof(errorMessage));
-        Serial.println(String("[SCD41] Failed to reinitialize: ") + errorMessage);
-        Serial.println(String("[SCD41] The SCD41 module is now disabled."));
+        MySerial.println(String("[SCD41] Failed to reinitialize: ") + errorMessage);
+        MySerial.println(String("[SCD41] The SCD41 module is now disabled."));
         scd41Ready = false;
         return;
     }
@@ -307,17 +404,17 @@ void setupSCD41() {
     error = scd4x.getSerialNumber(serialNumber);
     if (error) {
         errorToString(error, errorMessage, sizeof(errorMessage));
-        Serial.println(String("[SCD41] Serial read failed: ") + errorMessage);
-        Serial.println(String("[SCD41] The SCD41 module is now disabled."));
+        MySerial.println(String("[SCD41] Serial read failed: ") + errorMessage);
+        MySerial.println(String("[SCD41] The SCD41 module is now disabled."));
         scd41Ready = false;
         return;
     }
-    Serial.println(String("[SCD41] SCD41 ready (serial: ") + String((unsigned long)(serialNumber >> 32), HEX) + String((unsigned long)(serialNumber & 0xFFFFFFFF), HEX) + String(")"));
+    MySerial.println(String("[SCD41] SCD41 ready (serial: ") + String((unsigned long)(serialNumber >> 32), HEX) + String((unsigned long)(serialNumber & 0xFFFFFFFF), HEX) + String(")"));
 
     // self test - uncomment to run
     // uint16_t sensorStatus = 0;
     // error = scd4x.performSelfTest(sensorStatus);
-    // Serial.println(String("[SCD41] Self test result: 0x") + String(sensorStatus, HEX) + String(error ? String(", error: ") + String(error) : ", no error"));
+    // MySerial.println(String("[SCD41] Self test result: 0x") + String(sensorStatus, HEX) + String(error ? String(", error: ") + String(error) : ", no error"));
 
     // disable ASC since this is an indoor sensor and it expects 400ppm like once a week or something which it wont get
     scd4x.setAutomaticSelfCalibrationEnabled(0);
@@ -327,8 +424,8 @@ void setupSCD41() {
     error = scd4x.startPeriodicMeasurement();
     if (error) {
         errorToString(error, errorMessage, sizeof(errorMessage));
-        Serial.println(String("[SCD41] Failed to start periodic measurement: ") + errorMessage);
-        Serial.println(String("[SCD41] The SCD41 module is now disabled."));
+        MySerial.println(String("[SCD41] Failed to start periodic measurement: ") + errorMessage);
+        MySerial.println(String("[SCD41] The SCD41 module is now disabled."));
         scd41Ready = false;
         return;
     }
@@ -358,7 +455,7 @@ void pollSCD41() {
     error = scd4x.getDataReadyStatus(dataReady);
     if (error) {
         errorToString(error, errorMessage, sizeof(errorMessage));
-        Serial.println(String("[SCD41] Ready check failed: ") + errorMessage);
+        MySerial.println(String("[SCD41] Ready check failed: ") + errorMessage);
         return;
     }
 
@@ -371,7 +468,7 @@ void pollSCD41() {
     error = scd4x.readMeasurement(co2, temperature, humidity);
     if (error) {
         errorToString(error, errorMessage, sizeof(errorMessage));
-        Serial.println(String("[SCD41] Read failed: ") + errorMessage);
+        MySerial.println(String("[SCD41] Read failed: ") + errorMessage);
         return;
     }
 
@@ -382,9 +479,17 @@ void pollSCD41() {
 }
 
 void setup() {
-    Serial.begin(115200);
+    MySerial.begin(115200);
     delay(10000); // 10 second delay to open serial monitor
-    Serial.println("[SETUP] Starting setup...");
+    MySerial.println("[SETUP] Starting setup...");
+
+#if USE_BLUETOOTH_SERIAL
+    if (MySerial.enableBluetooth("Indoor-ESP32")) {
+        MySerial.println("[BT] Bluetooth serial ready as `Indoor-ESP32`");
+    } else {
+        MySerial.println("[BT] Failed to initialize Bluetooth serial");
+    }
+#endif
 
     Wire.begin(21, 22);
     Wire.setClock(100000);
@@ -396,19 +501,32 @@ void setup() {
 
     warmupStartMs = millis();
     if (warmupDelayMs > 0) {
-        Serial.println("[SETUP] Warmup enabled for " + String(WARMUP_SECONDS) + "s; API uploads will be paused during this time to stabilize measurements");
+        MySerial.println("[SETUP] Warmup enabled for " + String(WARMUP_SECONDS) + "s; API uploads will be paused during this time to stabilize measurements");
     }
 
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     const char* spinner[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
     uint8_t spidx = 0;
     while (WiFi.status() != WL_CONNECTED) {
-        Serial.print("\r[SETUP] Connecting to Wi-Fi ");
-        Serial.print(spinner[spidx]);
+        MySerial.print("\r[SETUP] Connecting to Wi-Fi ");
+        MySerial.print(spinner[spidx]);
         spidx = (spidx + 1) % 10;
         delay(100);
     }
-    Serial.println("\r[SETUP] Wi-Fi connected | Local IP: " + WiFi.localIP().toString());
+    MySerial.println("\r[SETUP] Wi-Fi connected | Local IP: " + WiFi.localIP().toString());
+
+    // Diagnostics block
+    esp_chip_info_t chipInfo;
+    esp_chip_info(&chipInfo);
+    MySerial.println("[SETUP] ESP32 Model: " + String(ESP.getChipModel()) + "; Cores: " + String(chipInfo.cores) + "; Revision: " + String(chipInfo.revision) + "; Flash Size: " + String(ESP.getFlashChipSize() / (1024 * 1024)) + "MB");
+    uint64_t chipid = ESP.getEfuseMac();
+    MySerial.printf("[SETUP] Chip ID (Efuse MAC base): %04X%08X\n", (uint16_t)(chipid >> 32), (uint32_t)chipid);
+    uint8_t wifiMac[6];
+    esp_read_mac(wifiMac, ESP_MAC_WIFI_STA);
+    MySerial.printf("[SETUP] Wi-Fi MAC: %02X:%02X:%02X:%02X:%02X:%02X\n", wifiMac[0], wifiMac[1], wifiMac[2], wifiMac[3], wifiMac[4], wifiMac[5]);
+    uint8_t btMac[6];
+    esp_read_mac(btMac, ESP_MAC_BT);
+    MySerial.printf("[SETUP] BLE MAC: %02X:%02X:%02X:%02X:%02X:%02X\n", btMac[0], btMac[1], btMac[2], btMac[3], btMac[4], btMac[5]);
 }
 
 void loop() {
@@ -426,7 +544,7 @@ void loop() {
 
             if (isWarmupActive()) {
                 unsigned long warmupElapsedSeconds = (millis() - warmupStartMs) / 1000UL;
-                Serial.println("[LOOP] Warmup active (" + String(warmupElapsedSeconds) + "/" + String(WARMUP_SECONDS) + "s); skipping API upload");
+                MySerial.println("[LOOP] Warmup active (" + String(warmupElapsedSeconds) + "/" + String(WARMUP_SECONDS) + "s); skipping API upload");
                 delay(timerDelay / 2);  // a bit hacky but delay to not overload sensors and to not spam messages
                 return;
             }
@@ -445,12 +563,12 @@ void loop() {
             int code = http.POST(payload);
             http.end();
 
-            Serial.println("\n[LOOP] Payload sent (HTTP " + String(code) + "): " + payload);
+            MySerial.println("\n[LOOP] Payload sent (HTTP " + String(code) + "): " + payload);
         } else {
-            Serial.println("[LOOP] Wi-Fi disconnected, skipping upload");
+            MySerial.println("[LOOP] Wi-Fi disconnected, skipping upload");
             if ((millis() - lastReconnectAttempt) > reconnectDelay) {
                 lastReconnectAttempt = millis();
-                Serial.println("[LOOP] Attempting to reconnect to Wi-Fi...");
+                MySerial.println("[LOOP] Attempting to reconnect to Wi-Fi...");
                 WiFi.disconnect();
                 WiFi.begin(WIFI_SSID, WIFI_PASS);
             }
