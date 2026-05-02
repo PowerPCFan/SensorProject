@@ -381,6 +381,9 @@ bool scd41HasReading = false;
 uint16_t scd41LastCo2 = 0;
 unsigned long scd41LastPollMs = 0;
 unsigned long scd41LastNoDataLogMs = 0;
+unsigned long scd41LastNotReadyLogMs = 0;
+unsigned long scd41LastStallLogMs = 0;
+unsigned long scd41LastReadingMs = 0;
 unsigned long scd41StartMs = 0;
 
 void setupSCD41() {
@@ -456,10 +459,26 @@ void addSCD41Json(JsonDocument &doc) {
 }
 
 void pollSCD41() {
-    if (!scd41Ready) return;
+    if (!scd41Ready) {
+        if ((millis() - scd41LastNotReadyLogMs) > 10000) {
+            MySerial.println("[SCD41] Sensor not ready; skipping poll");
+            scd41LastNotReadyLogMs = millis();
+        }
+        return;
+    }
+
     if ((millis() - scd41StartMs) < 10000) return;
     if ((millis() - scd41LastPollMs) < 1000) return;
     scd41LastPollMs = millis();
+
+    unsigned long now = millis();
+    if ((now - scd41StartMs) > 90000) {
+        unsigned long last = scd41HasReading ? scd41LastReadingMs : scd41StartMs;
+        if ((now - last) > 90000 && (now - scd41LastStallLogMs) > 10000) {
+            MySerial.println("[SCD41] No new data for 90s, likely a stall");
+            scd41LastStallLogMs = now;
+        }
+    }
 
     uint16_t error = 0;
     char errorMessage[128];
@@ -472,7 +491,13 @@ void pollSCD41() {
         return;
     }
 
-    if (!dataReady) return;
+    if (!dataReady) {
+        if ((millis() - scd41LastNoDataLogMs) > 10000) {
+            MySerial.println("[SCD41] Data not ready");
+            scd41LastNoDataLogMs = millis();
+        }
+        return;
+    }
 
     uint16_t co2 = 0;
     float temperature = 0;
@@ -489,6 +514,7 @@ void pollSCD41() {
 
     scd41LastCo2 = co2;
     scd41HasReading = true;
+    scd41LastReadingMs = millis();
 }
 
 void setup() {
