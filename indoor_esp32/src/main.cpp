@@ -386,6 +386,7 @@ bool scd41Ready = false;
 bool scd41HasReading = false;
 uint16_t scd41LastCo2 = 0;
 unsigned long scd41LastPollMs = 0;
+const unsigned long scd41PollIntervalMs = 5000;
 unsigned long scd41LastNoDataLogMs = 0;
 unsigned long scd41LastNotReadyLogMs = 0;
 unsigned long scd41LastStallLogMs = 0;
@@ -474,7 +475,7 @@ void pollSCD41() {
     }
 
     if ((millis() - scd41StartMs) < 10000) return;
-    if ((millis() - scd41LastPollMs) < 1000) return;
+    if ((millis() - scd41LastPollMs) < scd41PollIntervalMs) return;
     scd41LastPollMs = millis();
 
     unsigned long now = millis();
@@ -580,7 +581,6 @@ void setup() {
 
 void loop() {
     if (USE_PMS5003) pollPMS5003();
-    if (USE_SCD41) pollSCD41();
 
     if (isWarmupActive()) {
         if ((millis() - warmupLastLogMs) > 5000) {
@@ -599,7 +599,10 @@ void loop() {
             if (USE_BME680) addBME680Json(doc);
             if (USE_SGP40) addSGP40Json(doc);
             if (USE_PMS5003) addPMS5003Json(doc);
-            if (USE_SCD41) addSCD41Json(doc);
+            if (USE_SCD41) {
+                pollSCD41();
+                addSCD41Json(doc);
+            }
 
             doc["wifi_strength"] = WiFi.RSSI();
 
