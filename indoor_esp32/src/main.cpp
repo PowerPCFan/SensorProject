@@ -519,8 +519,6 @@ void pollSCD41() {
 
 void setup() {
     MySerial.begin(115200);
-    delay(10000); // 10 second delay to open serial monitor
-    MySerial.println("[SETUP] Starting setup...");
 
 #if USE_BLUETOOTH_SERIAL
     if (MySerial.enableBluetooth("Indoor-ESP32")) {
@@ -529,6 +527,9 @@ void setup() {
         MySerial.println("[BT] Failed to initialize Bluetooth serial");
     }
 #endif
+
+    delay(10000); // 10 second delay to open serial monitor
+    MySerial.println("[SETUP] Starting setup...");
 
     Wire.begin(21, 22);
     Wire.setClock(100000);
