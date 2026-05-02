@@ -19,6 +19,12 @@ const unsigned long timerDelay = POST_DELAY_MS;  // build flag
 unsigned long lastReconnectAttempt = 0;
 const unsigned long reconnectDelay = 30 * 60 * 1000;
 
+#ifndef STARTUP_DELAY
+#define STARTUP_DELAY 1000  // 1 second default
+#endif
+
+const unsigned long startupDelayMs = STARTUP_DELAY;
+
 #ifndef WARMUP_SECONDS
 #define WARMUP_SECONDS 0
 #endif
@@ -523,7 +529,7 @@ void setup() {
 #if USE_BLUETOOTH_SERIAL
     bool ok = MySerial.enableBluetooth("Indoor-ESP32");
 
-    delay(10000); // 10 second delay to open serial monitor
+    delay(startupDelayMs); // delay to have time to open serial monitor
 
     if (ok) {
         MySerial.println("[BT] Bluetooth serial ready as `Indoor-ESP32`");
