@@ -521,14 +521,17 @@ void setup() {
     MySerial.begin(115200);
 
 #if USE_BLUETOOTH_SERIAL
-    if (MySerial.enableBluetooth("Indoor-ESP32")) {
+    bool ok = MySerial.enableBluetooth("Indoor-ESP32");
+
+    delay(10000); // 10 second delay to open serial monitor
+
+    if (ok) {
         MySerial.println("[BT] Bluetooth serial ready as `Indoor-ESP32`");
     } else {
         MySerial.println("[BT] Failed to initialize Bluetooth serial");
     }
 #endif
 
-    delay(10000); // 10 second delay to open serial monitor
     MySerial.println("[SETUP] Starting setup...");
 
     Wire.begin(21, 22);
