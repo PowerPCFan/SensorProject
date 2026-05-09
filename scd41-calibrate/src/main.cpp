@@ -31,6 +31,13 @@ void setup() {
     scd4x.reinit();
     delay(1000);
 
+    error = scd4x.setAutomaticSelfCalibrationEnabled(0);
+    // dont persist yet, we're doing that later
+    if (error) {
+        errorToString(error, errorMessage, sizeof(errorMessage));
+        Serial.println(String("Failed to disable ASC: ") + errorMessage);
+    }
+
     error = scd4x.getSerialNumber(serialNumber);
     if (error) {
         errorToString(error, errorMessage, sizeof(errorMessage));

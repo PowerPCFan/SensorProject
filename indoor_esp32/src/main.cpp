@@ -46,10 +46,26 @@ unsigned long warmupStartMs = 0;
 unsigned long warmupLastLogMs = 0;
 unsigned long warmupLastSampleMs = 0;
 
-const bool USE_BME680 = true;
-const bool USE_PMS5003 = true;
-const bool USE_SCD41 = true;
-const bool USE_SGP40 = true;
+// const bool USE_BME680 = true;
+// const bool USE_PMS5003 = true;
+// const bool USE_SCD41 = true;
+// const bool USE_SGP40 = true;
+
+#ifndef USE_BME680
+#define USE_BME680 0
+#endif
+
+#ifndef USE_PMS5003
+#define USE_PMS5003 0
+#endif
+
+#ifndef USE_SCD41
+#define USE_SCD41 0
+#endif
+
+#ifndef USE_SGP40
+#define USE_SGP40 0
+#endif
 
 TwoWire secondaryWire(1);
 Adafruit_BME680 bme(&secondaryWire);
@@ -416,7 +432,7 @@ bool scd41Ready = false;
 bool scd41HasReading = false;
 uint16_t scd41LastCo2 = 0;
 unsigned long scd41LastPollMs = 0;
-const unsigned long scd41PollIntervalMs = 5000;
+const unsigned long scd41PollIntervalMs = 6000; // poll slightly slower than the sensor can handle
 unsigned long scd41LastNoDataLogMs = 0;
 unsigned long scd41LastNotReadyLogMs = 0;
 unsigned long scd41LastStallLogMs = 0;
@@ -432,11 +448,11 @@ void setupSCD41() {
 
     delay(30);
 
-    error = scd4x.wakeUp();
-    if (error) {
-        errorToString(error, errorMessage, sizeof(errorMessage));
-        MySerial.println(String("[SCD41] Failed to wake up: ") + errorMessage);
-    }
+    // error = scd4x.wakeUp();
+    // if (error) {
+    //     errorToString(error, errorMessage, sizeof(errorMessage));
+    //     MySerial.println(String("[SCD41] Failed to wake up: ") + errorMessage);
+    // }
 
     error = scd4x.stopPeriodicMeasurement();
     delay(500);
@@ -465,13 +481,13 @@ void setupSCD41() {
     MySerial.println(String("[SCD41] SCD41 ready (serial: ") + String((unsigned long)(serialNumber >> 32), HEX) + String((unsigned long)(serialNumber & 0xFFFFFFFF), HEX) + String(")"));
 
     // self test - uncomment to run
-    // uint16_t sensorStatus = 0;
-    // error = scd4x.performSelfTest(sensorStatus);
-    // MySerial.println(String("[SCD41] Self test result: 0x") + String(sensorStatus, HEX) + String(error ? String(", error: ") + String(error) : ", no error"));
+    uint16_t sensorStatus = 0;
+    error = scd4x.performSelfTest(sensorStatus);
+    MySerial.println(String("[SCD41] Self test result: 0x") + String(sensorStatus, HEX) + String(" (pass = 0x0); test function errored: ") + String(error ? String("yes, error: ") + String(error) : "no"));
 
     // disable ASC since this is an indoor sensor and it expects 400ppm like once a week or something which it wont get
-    scd4x.setAutomaticSelfCalibrationEnabled(0);
-    scd4x.persistSettings();
+    // scd4x.setAutomaticSelfCalibrationEnabled(0);
+    // scd4x.persistSettings();
 
     delay(1000);
     error = scd4x.startPeriodicMeasurement();
@@ -548,6 +564,8 @@ void pollSCD41() {
     }
 
     if (co2 == 0) return;
+
+    MySerial.println(String("[SCD41] Data ready, measurement: ") + String(co2) + String(" ppm"));
 
     scd41LastCo2 = co2;
     scd41HasReading = true;
