@@ -46,11 +46,6 @@ unsigned long warmupStartMs = 0;
 unsigned long warmupLastLogMs = 0;
 unsigned long warmupLastSampleMs = 0;
 
-// const bool USE_BME680 = true;
-// const bool USE_PMS5003 = true;
-// const bool USE_SCD41 = true;
-// const bool USE_SGP40 = true;
-
 #ifndef USE_BME680
 #define USE_BME680 0
 #endif
@@ -67,8 +62,7 @@ unsigned long warmupLastSampleMs = 0;
 #define USE_SGP40 0
 #endif
 
-TwoWire secondaryWire(1);
-Adafruit_BME680 bme(&secondaryWire);
+Adafruit_BME680 bme;
 SensirionI2CSgp40 sgp40;
 VOCGasIndexAlgorithm vocAlgorithm;
 SensirionI2cScd4x scd4x;
@@ -271,8 +265,6 @@ uint16_t sgp40HumidityToTicks(float humidity) {
 }
 
 void setupBME680() {
-    secondaryWire.begin(25, 26, 100000);
-
     if (!bme.begin(0x76)) {
         // 0x76 is invalid, try 0x77
         if (!bme.begin(0x77)) {
@@ -355,14 +347,14 @@ void addBME680Json(JsonDocument &doc) {
 }
 
 void setupSGP40() {
-    sgp40.begin(secondaryWire);
+    sgp40.begin(Wire);
     MySerial.println("[SGP40] SGP40 ready");
     sgp40Ready = true;
 
     // self test - uncomment to run
-    // uint16_t selfTestResult = 0;
-    // uint16_t error = sgp40.executeSelfTest(selfTestResult);
-    // MySerial.println(String("[SGP40] Self test result (0xD400 = pass): 0x") + String(selfTestResult, HEX) + String(" (error occurred: ") + String(error) + String(")"));
+    uint16_t selfTestResult = 0;
+    uint16_t error = sgp40.executeSelfTest(selfTestResult);
+    MySerial.println(String("[SGP40] Self test result (0xD400 = pass): 0x") + String(selfTestResult, HEX) + String(" (error occurred: ") + String(error) + String(")"));
 }
 
 void addSGP40Json(JsonDocument &doc) {
@@ -418,7 +410,7 @@ void addPMS5003Json(JsonDocument &doc) {
     uint16_t bin_50_100 = safeSubtract(pmsValues.p_50um, pmsValues.p_100um);
     uint16_t bin_100_plus = pmsValues.p_100um;
 
-    JsonObject pm_bins = doc.createNestedObject("pm_bins");
+    JsonObject pm_bins = doc["pm_bins"].to<JsonObject>();
 
     pm_bins["bin_03_05"] = bin_03_05;
     pm_bins["bin_05_10"] = bin_05_10;
