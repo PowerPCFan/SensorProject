@@ -94,8 +94,8 @@ void setup() {
         peerInfo.encrypt = false;
 
         if (bmeReady) {
-            myData.temperature = bme.readTemperature() - 0.5;
-            myData.humidity = bme.readHumidity() - 2;
+            myData.temperature = bme.readTemperature();
+            myData.humidity = bme.readHumidity();
             myData.pressure = bme.readPressure() / 100.0f;
             myData.esp32_temperature = temperatureRead();
 
@@ -163,8 +163,17 @@ void loop() {
             JsonDocument doc;
 
             if (bmeReady) {
-                doc["temperature"] = bme.readTemperature() - 0.5f;
-                doc["humidity"] = bme.readHumidity() - 2.0f;
+                // measurements:
+                // - temp: celsius (c)
+                // - humidity: relative humidity (%)
+                // - pressure: hectopascals (hPa)
+
+                // doc["temperature"] = bme.readTemperature() - 0.5f;
+                doc["temperature"] = bme.readTemperature();
+
+                // doc["humidity"] = bme.readHumidity() - 2.0f;
+                doc["humidity"] = bme.readHumidity();
+
                 doc["pressure"] = bme.readPressure() / 100.0f;
             }
 
