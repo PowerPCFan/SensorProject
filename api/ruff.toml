@@ -1,0 +1,60 @@
+exclude = [
+    ".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".ipynb_checkpoints", ".mypy_cache", ".nox",
+    ".pants.d", ".pyenv", ".pytest_cache", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv", ".vscode",
+    "__pypackages__", "_build", "buck-out", "build", "dist", "node_modules", "site-packages", "venv",
+    "src/tests/**", "scripts/**"
+]
+
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["ALL"]
+ignore = [
+    "UP015",   # Checks for redundant open modes
+    "INP001",  # Checks for missing __init__.py
+    "D",       # Annoying docstring stuff
+    "BLE",     # Blind `except Exception` (i should probably get used to not doing this lol)
+    "T201",    # Alerts when you use `print` statements
+    "T203",
+    "G004",    # Alerts when you use an F-string in a logger call
+    "ERA",     # Checks for commented out code
+    "F821",    # Checks for undefined names - disable due to Pylance/Pyright reportUndefinedVariable overlap
+    "FBT001",  # Checks for boolean positional arguments stuff
+    "FBT002",
+    "TRY300",  # Checks for return statements in try blocks - this is really annoying lol
+    "RET505",  # Checks for elif/else after a return statement - this is also annoying
+    "FLY002",  # Checks for str.join calls and tries to replace with f-strings - not a great suggestion in most cases
+    "FIX002",  # Tells you to resolve TODOs (true, but ion want a "problem" showing just bcz I haven't fixed/added smth)
+    "TD002",   # Other annoying todo comment stuff
+    "TD003",
+    "S101",    # Checks for assert statements - using pytest so this is fine
+    "B904",    # Checks for exceptions that are raised in an except clause without `from e` - seems to be fastapi false positive
+    "TRY301",  # Seems useless and is quite annoying - "abstract raise to an inner function"
+    "A001",    # Checks for shadowing of built-in arguments/vars - there are so many builtins being shadowed its a lost cause atp
+    "A002",
+    "N818",    # Tries to force exception names to have "Error" suffix - annoying and plus Exception is fine as well imo
+]
+
+# enables latest rules (possibly unstable)
+preview = true
+explicit-preview-rules = false
+
+# just using extend-ignore for preview rules so its somewhat separated and easier to read
+extend-ignore = [
+    "CPY001",  # Checks for copyright notice at the top of files
+    "DOC",     # More annoying docstring stuff (#TODO: be more specific with ignore cuz some might be useful)
+    "PLR6301"  # Checks for functions on classes that aren't using `self` and suggests staticmethod/classmethod/normal func - useful but causing fastapi issues
+]
+
+fixable = ["ALL"]
+unfixable = []
+
+typing-extensions = false
+
+[format]
+quote-style = "double"
+indent-style = "space"
+
+[lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]

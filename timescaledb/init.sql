@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS outdoor (
     pressure DOUBLE PRECISION,
     light_level DOUBLE PRECISION,
     esp32_temperature DOUBLE PRECISION,
-    wifi_strength DOUBLE PRECISION
+    wifi_strength DOUBLE PRECISION,
+    dew_point DOUBLE PRECISION
 );
 
 CREATE TABLE IF NOT EXISTS indoor (
