@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS outdoor (
     pressure DOUBLE PRECISION,
     light_level DOUBLE PRECISION,
     esp32_temperature DOUBLE PRECISION,
+    esp32_voltage DOUBLE PRECISION,
     wifi_strength DOUBLE PRECISION,
     dew_point DOUBLE PRECISION
 );
@@ -103,6 +104,7 @@ SELECT create_hypertable('indoor', 'time', if_not_exists => TRUE);
 --     avg(pressure) AS pressure,
 --     avg(light_level) AS light_level,
 --     avg(esp32_temperature) AS esp32_temperature,
+--     avg(esp32_voltage) AS esp32_voltage,
 --     avg(wifi_strength) AS wifi_strength
 
 -- FROM outdoor

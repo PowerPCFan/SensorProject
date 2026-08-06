@@ -13,6 +13,7 @@ typedef struct __attribute__((packed)) struct_message {
     float humidity;
     float pressure;
     float esp32_temperature;
+    float esp32_voltage;
 } struct_message;
 
 struct_message myData;
@@ -78,6 +79,7 @@ void loop() {
             doc["humidity"] = myData.humidity;
             doc["pressure"] = myData.pressure;
             doc["esp32_temperature"] = myData.esp32_temperature;
+            doc["esp32_voltage"] = myData.esp32_voltage;
             doc["wifi_strength"] = WiFi.RSSI();
 
             String payload;

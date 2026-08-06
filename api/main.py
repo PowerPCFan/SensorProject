@@ -70,6 +70,7 @@ class OutdoorMeasurement(Base):
     pressure = Column(DOUBLE_PRECISION)
     light_level = Column(DOUBLE_PRECISION)
     esp32_temperature = Column(DOUBLE_PRECISION)
+    esp32_voltage = Column(DOUBLE_PRECISION)
     wifi_strength = Column(DOUBLE_PRECISION)
     dew_point = Column(DOUBLE_PRECISION)
 
@@ -104,6 +105,7 @@ class OutdoorData(BaseModel):
     pressure: float | None = None
     light_level: float | None = None
     esp32_temperature: float | None = None
+    esp32_voltage: float | None = None
     wifi_strength: float | None = None
     dew_point: float | None = None
 

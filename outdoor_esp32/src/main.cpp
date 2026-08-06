@@ -5,20 +5,134 @@
 #include <WiFi.h>
 #include <math.h>
 
+#ifdef VOLTAGE_PIN
+float readESP32Voltage() {
+    uint32_t raw_mv_sum = 0;
+    const int samples = 10;
+
+    for (int i = 0; i < samples; i++) {
+        raw_mv_sum += analogReadMilliVolts(VOLTAGE_PIN);
+        delay(2);
+    }
+    float pin_volts = (raw_mv_sum / (float)samples) / 1000.0f;
+
+    // using 10k and 100k resistors, so i need to multiply by 11
+    return pin_volts * 11.0f;
+}
+#else
+float readESP32Voltage() {
+    return 0.0f;
+}
+#endif
+
+#if !defined(ESPNOW_ENABLED) && defined(DEBUG_SERVER)
+#include <WebServer.h>
+
+WebServer debugServer(80);
+bool serverStarted = false;
+String logBuffer = "";
+const size_t MAX_LOG_SIZE = 4096;
+
+void appendLogBuffer(const String& str) {
+    logBuffer += str;
+    if (logBuffer.length() > MAX_LOG_SIZE) {
+        logBuffer = logBuffer.substring(logBuffer.length() - (MAX_LOG_SIZE / 2));
+    }
+}
+
+void logMsg(const String &msg) {
+    Serial.println(msg);
+    appendLogBuffer(msg + "\n");
+}
+
+void logPrintf(const char *format, ...) {
+    char buf[256];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buf, sizeof(buf), format, args);
+    va_end(args);
+    Serial.print(buf);
+    appendLogBuffer(String(buf));
+}
+
+void setupDebugServer() {
+    if (!serverStarted) {
+        debugServer.on("/", []() {
+            debugServer.send(200, "text/plain", logBuffer.length() == 0 ? "No logs recorded yet.\n" : logBuffer);
+        });
+        debugServer.begin();
+        serverStarted = true;
+        logMsg("[DEBUG_SERVER] Server started (http://" + WiFi.localIP().toString() + "/)");
+    }
+}
+#else
+#define logMsg(msg) Serial.println(msg)
+#define logPrintf(fmt, ...) Serial.printf(fmt, ##__VA_ARGS__)
+#endif
+
 #ifdef ESPNOW_ENABLED
 #include <esp_now.h>
 #include <esp_wifi.h>
 
-const uint64_t uS_TO_S_FACTOR = 1000000ULL;
-const uint64_t TIME_TO_SLEEP = POST_DELAY_MS / 1000;
+const uint64_t TIME_TO_SLEEP_US = (uint64_t)POST_DELAY_MS * 1000ULL;
 #else
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
 unsigned long lastTime = 0;
 const unsigned long timerDelay = POST_DELAY_MS;
-unsigned long lastReconnectAttempt = 0;
-const unsigned long reconnectDelay = 30 * 60 * 1000;
+
+void goToDeepSleep(uint64_t seconds, const char* reason) {
+    logPrintf("\n[DEEP_SLEEP] %s. Sleeping for %llu seconds...\n", reason, seconds);
+    Serial.flush();
+    esp_sleep_enable_timer_wakeup(seconds * 1000000ULL);
+    esp_deep_sleep_start();
+}
+
+bool connectWiFi() {
+    if (WiFi.status() == WL_CONNECTED) {
+        return true;
+    }
+
+    const int maxAttempts = 10;
+    const unsigned long attemptTimeoutMs = 15000; // 15 secs per attempt
+    const char* spinner[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (WiFi.status() == WL_CONNECTED) {
+            return true;
+        }
+
+        logPrintf("\n[WIFI] Connection attempt %d of %d...\n", attempt, maxAttempts);
+        WiFi.disconnect();
+        WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+        unsigned long startAttempt = millis();
+        uint8_t spidx = 0;
+
+        while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt) < attemptTimeoutMs) {
+            Serial.print("\r[WIFI] Connecting ");
+            Serial.print(spinner[spidx]);
+            spidx = (spidx + 1) % 10;
+            delay(100);
+        }
+
+        if (WiFi.status() == WL_CONNECTED) {
+            logMsg("\r[WIFI] Connected! | Local IP: " + WiFi.localIP().toString());
+#if !defined(ESPNOW_ENABLED) && defined(DEBUG_SERVER)
+            setupDebugServer();
+#endif
+            return true;
+        }
+
+        logPrintf("\r[WIFI] Attempt %d failed or timed out after 15s.\n", attempt);
+        if (attempt < maxAttempts) {
+            delay(1000); // 1-second pause between attempts
+        }
+    }
+
+    return false;
+}
 #endif
 
 Adafruit_BME280 bme;
@@ -32,6 +146,7 @@ typedef struct __attribute__((packed)) struct_message {
     float humidity;
     float pressure;
     float esp32_temperature;
+    float esp32_voltage;
 } struct_message;
 
 struct_message myData;
@@ -47,22 +162,39 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 #endif
 
 void setup() {
+#if defined(SLOWEST_CLOCK)
+    constexpr int CPU_MHZ = 80;
+#elif defined(SLOW_CLOCK)
+    constexpr int CPU_MHZ = 160;
+#else
+    constexpr int CPU_MHZ = 240;
+#endif
+
+    if (!setCpuFrequencyMhz(CPU_MHZ)) {
+        logMsg("[SETUP] Failed to set CPU frequency to " + String(CPU_MHZ) + " MHz");
+    }
+
     Serial.begin(115200);
-    Serial.println("\n[SETUP] Starting setup...");
+    logMsg("\n[SETUP] Starting setup...");
+    logPrintf("[SETUP] CPU Frequency: %u MHz\n", getCpuFrequencyMhz());
+
+#ifdef VOLTAGE_PIN
+    pinMode(VOLTAGE_PIN, INPUT);
+#endif
 
     Wire.begin(21, 22);
     Wire.setClock(100000);
 
     if (!bme.begin(0x76)) {
         if (!bme.begin(0x77)) {
-            Serial.println("[BME280] Could not find a valid BME280 sensor, check wiring!");
+            logMsg("[BME280] Could not find a valid BME280 sensor, check wiring!");
         } else {
             bmeReady = true;
-            Serial.println("[BME280] BME280 found at 0x77");
+            logMsg("[BME280] BME280 found at 0x77");
         }
     } else {
         bmeReady = true;
-        Serial.println("[BME280] BME280 found at 0x76");
+        logMsg("[BME280] BME280 found at 0x76");
     }
 
 #ifdef ESPNOW_ENABLED
@@ -70,7 +202,7 @@ void setup() {
     WiFi.disconnect();
 
     if (esp_now_init() != ESP_OK) {
-        Serial.println("[ESP-NOW] Error initializing ESP-NOW");
+        logMsg("[ESP-NOW] Error initializing ESP-NOW");
     } else {
         esp_now_register_send_cb(OnDataSent);
 
@@ -81,13 +213,13 @@ void setup() {
                 targetAddress[i] = (uint8_t) mac[i];
             }
 
-            Serial.printf(
+            logPrintf(
                 "[ESP-NOW] Parsed Receiver Node MAC Address: %02X:%02X:%02X:%02X:%02X:%02X\n",
                 targetAddress[0], targetAddress[1], targetAddress[2],
                 targetAddress[3], targetAddress[4], targetAddress[5]
             );
         } else {
-            Serial.println("[ESP-NOW] ERROR: Failed to parse MAC address from ESPNOW_NODE build flag");
+            logMsg("[ESP-NOW] ERROR: Failed to parse MAC address from ESPNOW_NODE build flag");
         }
 
         memcpy(peerInfo.peer_addr, targetAddress, 6);
@@ -98,6 +230,7 @@ void setup() {
             myData.humidity = bme.readHumidity();
             myData.pressure = bme.readPressure() / 100.0f;
             myData.esp32_temperature = temperatureRead();
+            myData.esp32_voltage = readESP32Voltage();
 
             bool success = false;
             for (uint8_t channel = 1; channel <= 11; channel++) {
@@ -121,33 +254,26 @@ void setup() {
                 }
 
                 if (deliverySuccess) {
-                    Serial.printf("[ESP-NOW] Delivery Success on channel %d\n", channel);
+                    logPrintf("[ESP-NOW] Delivery Success on channel %d\n", channel);
                     success = true;
                     break;
                 }
             }
 
             if (!success) {
-                Serial.println("[ESP-NOW] Delivery Failed on all channels.");
+                logMsg("[ESP-NOW] Delivery Failed on all channels.");
             }
         }
     }
 
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
-    Serial.println("[DEEP_SLEEP] Going to sleep for " + String((uint32_t)TIME_TO_SLEEP) + " seconds.");
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_US);
+    logMsg("[DEEP_SLEEP] Going to sleep for " + String((uint32_t)TIME_TO_SLEEP_US) + " microseconds.");
     Serial.flush(); 
     esp_deep_sleep_start();
 #else
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    const char* spinner[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
-    uint8_t spidx = 0;
-    while (WiFi.status() != WL_CONNECTED) {
-        Serial.print("\r[SETUP] Connecting to Wi-Fi ");
-        Serial.print(spinner[spidx]);
-        spidx = (spidx + 1) % 10;
-        delay(100);
+    if (!connectWiFi()) {
+        goToDeepSleep(600, "All 10 Wi-Fi connection attempts failed");
     }
-    Serial.println("\r[SETUP] Wi-Fi connected | Local IP: " + WiFi.localIP().toString());
 #endif
 }
 
@@ -156,8 +282,19 @@ void loop() {
     // we are using setup as loop
     // since it deep sleeps at the end meaning itll reset and then rerun setup
 #else
+#if defined(DEBUG_SERVER)
+    debugServer.handleClient();
+#endif
+
     if ((millis() - lastTime) > timerDelay || lastTime == 0) {
         lastTime = millis();
+
+        if (WiFi.status() != WL_CONNECTED) {
+            logMsg("[LOOP] Wi-Fi disconnected. Attempting to reconnect...");
+            if (!connectWiFi()) {
+                goToDeepSleep(600, "Wi-Fi reconnection failed after 10 attempts");
+            }
+        }
 
         if (WiFi.status() == WL_CONNECTED) {
             JsonDocument doc;
@@ -168,16 +305,13 @@ void loop() {
                 // - humidity: relative humidity (%)
                 // - pressure: hectopascals (hPa)
 
-                // doc["temperature"] = bme.readTemperature() - 0.5f;
                 doc["temperature"] = bme.readTemperature();
-
-                // doc["humidity"] = bme.readHumidity() - 2.0f;
                 doc["humidity"] = bme.readHumidity();
-
                 doc["pressure"] = bme.readPressure() / 100.0f;
             }
 
             doc["esp32_temperature"] = temperatureRead();
+            doc["esp32_voltage"] = readESP32Voltage();
             doc["wifi_strength"] = WiFi.RSSI();
 
             String payload;
@@ -191,16 +325,9 @@ void loop() {
             int code = http.POST(payload);
             http.end();
 
-            Serial.println("\n[LOOP] Payload sent (HTTP " + String(code) + "): " + payload);
-        } else {
-            Serial.println("[LOOP] Wi-Fi disconnected, skipping upload");
-            if ((millis() - lastReconnectAttempt) > reconnectDelay) {
-                lastReconnectAttempt = millis();
-                Serial.println("[LOOP] Attempting to reconnect to Wi-Fi...");
-                WiFi.disconnect();
-                WiFi.begin(WIFI_SSID, WIFI_PASS);
-            }
+            logMsg("\n[LOOP] Payload sent (HTTP " + String(code) + "): " + payload);
         }
     }
 #endif
 }
+
