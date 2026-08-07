@@ -297,7 +297,7 @@ struct DiscordQueueItem {
 QueueHandle_t discordQueue = nullptr;
 TaskHandle_t discordWorkerTask = nullptr;
 
-void sendDiscordWebhook(const String& messageText, bool pingUser = false);
+void sendDiscordWebhook(const String& messageText, bool pingUser);
 
 void sendDiscordWebhookTask(void* param) {
     (void)param;
