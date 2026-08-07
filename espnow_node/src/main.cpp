@@ -384,6 +384,8 @@ typedef struct __attribute__((packed)) struct_message {
     float temperature;
     float humidity;
     float pressure;
+    float internal_temperature;
+    float internal_humidity;
     float esp32_temperature;
     float esp32_voltage;
 } struct_message;
@@ -542,6 +544,10 @@ void loop() {
             doc["temperature"] = myData.temperature;
             doc["humidity"] = myData.humidity;
             doc["pressure"] = myData.pressure;
+            if (!isnan(myData.internal_temperature) && !isnan(myData.internal_humidity)) {
+                doc["internal_temperature"] = myData.internal_temperature;
+                doc["internal_humidity"] = myData.internal_humidity;
+            }
             doc["esp32_temperature"] = myData.esp32_temperature;
             doc["esp32_voltage"] = myData.esp32_voltage;
 #ifdef RUNNING_NEW_ESP_IDF_VERSION

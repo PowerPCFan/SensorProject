@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS outdoor (
     humidity DOUBLE PRECISION,
     pressure DOUBLE PRECISION,
     light_level DOUBLE PRECISION,
+    internal_temperature DOUBLE PRECISION,
+    internal_humidity DOUBLE PRECISION,
     esp32_temperature DOUBLE PRECISION,
     esp32_voltage DOUBLE PRECISION,
     wifi_strength DOUBLE PRECISION,

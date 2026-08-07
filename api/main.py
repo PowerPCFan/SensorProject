@@ -69,6 +69,8 @@ class OutdoorMeasurement(Base):
     humidity = Column(DOUBLE_PRECISION)
     pressure = Column(DOUBLE_PRECISION)
     light_level = Column(DOUBLE_PRECISION)
+    internal_temperature = Column(DOUBLE_PRECISION)
+    internal_humidity = Column(DOUBLE_PRECISION)
     esp32_temperature = Column(DOUBLE_PRECISION)
     esp32_voltage = Column(DOUBLE_PRECISION)
     wifi_strength = Column(DOUBLE_PRECISION)
@@ -104,6 +106,8 @@ class OutdoorData(BaseModel):
     humidity: float | None = None
     pressure: float | None = None
     light_level: float | None = None
+    internal_temperature: float | None = None
+    internal_humidity: float | None = None
     esp32_temperature: float | None = None
     esp32_voltage: float | None = None
     wifi_strength: float | None = None
@@ -304,6 +308,7 @@ async def update_outdoor(data: OutdoorData) -> JSONResponse:
 
     table = Table.OUTDOOR
     valid_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    valid_data = {k: v for k, v in valid_data.items() if not (isinstance(v, float) and math.isnan(v))}
 
     if (
         (temp := valid_data.get("temperature")) is not None

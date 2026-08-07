@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
+#include <Adafruit_AHTX0.h>
 #include <WiFi.h>
 #include <math.h>
 
@@ -136,7 +137,10 @@ bool connectWiFi() {
 #endif
 
 Adafruit_BME280 bme;
+Adafruit_AHTX0 aht;
+TwoWire internalBus = TwoWire(1);
 bool bmeReady = false;
+bool ahtReady = false;
 
 #ifdef ESPNOW_ENABLED
 uint8_t targetAddress[6];
@@ -145,6 +149,8 @@ typedef struct __attribute__((packed)) struct_message {
     float temperature;
     float humidity;
     float pressure;
+    float internal_temperature;
+    float internal_humidity;
     float esp32_temperature;
     float esp32_voltage;
 } struct_message;
@@ -212,6 +218,9 @@ void setup() {
     Wire.begin(21, 22);
     Wire.setClock(100000);
 
+    internalBus.begin(25, 26);
+    internalBus.setClock(100000);
+
     if (!bme.begin(0x76)) {
         if (!bme.begin(0x77)) {
             logMsg("[BME280] Could not find a valid BME280 sensor, check wiring!");
@@ -222,6 +231,13 @@ void setup() {
     } else {
         bmeReady = true;
         logMsg("[BME280] BME280 found at 0x76");
+    }
+
+    if (!aht.begin(&internalBus, 0, 38U)) {
+        logMsg("[AHT20] Could not find a valid AHT20 sensor on pins 25/26 with address 0x38");
+    } else {
+        ahtReady = true;
+        logMsg("[AHT20] AHT20 found on internal bus");
     }
 
 #ifdef ESPNOW_ENABLED
@@ -261,6 +277,16 @@ void setup() {
             myData.temperature = bme.readTemperature();
             myData.humidity = bme.readHumidity();
             myData.pressure = bme.readPressure() / 100.0f;
+            if (ahtReady) {
+                sensors_event_t humidityEvent;
+                sensors_event_t tempEvent;
+                aht.getEvent(&humidityEvent, &tempEvent);
+                myData.internal_temperature = tempEvent.temperature;
+                myData.internal_humidity = humidityEvent.relative_humidity;
+            } else {
+                myData.internal_temperature = NAN;
+                myData.internal_humidity = NAN;
+            }
             myData.esp32_temperature = temperatureRead();
             myData.esp32_voltage = readESP32Voltage();
 
@@ -345,6 +371,14 @@ void loop() {
                 doc["temperature"] = bme.readTemperature();
                 doc["humidity"] = bme.readHumidity();
                 doc["pressure"] = bme.readPressure() / 100.0f;
+            }
+
+            if (ahtReady) {
+                sensors_event_t humidityEvent;
+                sensors_event_t tempEvent;
+                aht.getEvent(&humidityEvent, &tempEvent);
+                doc["internal_temperature"] = tempEvent.temperature;
+                doc["internal_humidity"] = humidityEvent.relative_humidity;
             }
 
             doc["esp32_temperature"] = temperatureRead();
