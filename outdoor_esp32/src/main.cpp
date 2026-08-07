@@ -105,7 +105,7 @@ bool connectWiFi() {
 
         logPrintf("\n[WIFI] Connection attempt %d of %d...\n", attempt, maxAttempts);
         WiFi.disconnect();
-        WiFi.begin(WIFI_SSID, WIFI_PASS);
+        WiFi.begin(WIFI_SSID, WIFI_PASS, 6);
 
         unsigned long startAttempt = millis();
         uint8_t spidx = 0;
@@ -155,9 +155,34 @@ esp_now_peer_info_t peerInfo;
 volatile bool deliveryComplete = false;
 volatile bool deliverySuccess = false;
 
+// RTC_DATA_ATTR uint8_t lastWorkingChannel = 0;
+
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
     deliverySuccess = (status == ESP_NOW_SEND_SUCCESS);
     deliveryComplete = true;
+}
+
+bool sendOnChannel(uint8_t channel) {
+    peerInfo.channel = channel;
+
+    if (esp_now_add_peer(&peerInfo) == ESP_ERR_ESPNOW_EXIST) {
+        esp_now_mod_peer(&peerInfo);
+    }
+
+    esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+
+    deliveryComplete = false;
+    deliverySuccess = false;
+
+    esp_now_send(targetAddress, (uint8_t *) &myData, sizeof(myData));
+
+    int wait_ms = 0;
+    while (!deliveryComplete && wait_ms < 50) {
+        delay(1);
+        wait_ms++;
+    }
+
+    return deliverySuccess;
 }
 #endif
 
@@ -172,6 +197,8 @@ void setup() {
 
     if (!setCpuFrequencyMhz(CPU_MHZ)) {
         logMsg("[SETUP] Failed to set CPU frequency to " + String(CPU_MHZ) + " MHz");
+    } else {
+        logMsg("[SETUP] CPU frequency set to " + String(CPU_MHZ) + " MHz" + (CPU_MHZ == 240 ? " (default)" : "") + (CPU_MHZ == getCpuFrequencyMhz() ? " (confirmed)" : " (WARN: mismatch between getCpuFrequencyMhz() and requested frequency)"));
     }
 
     Serial.begin(115200);
@@ -199,6 +226,11 @@ void setup() {
 
 #ifdef ESPNOW_ENABLED
     WiFi.mode(WIFI_STA);
+    if (esp_wifi_set_max_tx_power(84) != ESP_OK) {
+        int8_t currentTx;
+        esp_wifi_get_max_tx_power(&currentTx);
+        logMsg("[ESP-NOW] Failed to set ESP-NOW Wi-Fi transmit power to 84 (20dBm); currently set to " + String(currentTx * 0.25f) + " dBm");
+    }
     WiFi.disconnect();
 
     if (esp_now_init() != ESP_OK) {
@@ -233,35 +265,40 @@ void setup() {
             myData.esp32_voltage = readESP32Voltage();
 
             bool success = false;
-            for (uint8_t channel = 1; channel <= 11; channel++) {
-                peerInfo.channel = channel;
 
-                if (esp_now_add_peer(&peerInfo) == ESP_ERR_ESPNOW_EXIST) {
-                    esp_now_mod_peer(&peerInfo);
-                }
-
-                esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
-
-                deliveryComplete = false;
-                deliverySuccess = false;
-
-                esp_now_send(targetAddress, (uint8_t *) &myData, sizeof(myData));
-
-                int wait_ms = 0;
-                while (!deliveryComplete && wait_ms < 100) {
-                    delay(1);
-                    wait_ms++;
-                }
-
-                if (deliverySuccess) {
-                    logPrintf("[ESP-NOW] Delivery Success on channel %d\n", channel);
-                    success = true;
-                    break;
-                }
+            const uint8_t CHANNEL = 6;
+            logPrintf("[ESP-NOW] Sending on channel %d...\n", CHANNEL);
+            if (sendOnChannel(CHANNEL)) {
+                logPrintf("[ESP-NOW] Delivery Success on channel %d\n", CHANNEL);
+                success = true;
             }
 
+            // if (lastWorkingChannel >= 1 && lastWorkingChannel <= 11) {
+            //     logPrintf("[ESP-NOW] Trying cached channel %d...\n", lastWorkingChannel);
+            //     if (sendOnChannel(lastWorkingChannel)) {
+            //         logPrintf("[ESP-NOW] Delivery Success on cached channel %d\n", lastWorkingChannel);
+            //         success = true;
+            //     } else {
+            //         logPrintf("[ESP-NOW] Delivery failed on cached channel %d, starting channel sweep...\n", lastWorkingChannel);
+            //     }
+            // }
+            // 
+            // if (!success) {
+            //     for (uint8_t channel = 1; channel <= 11; channel++) {
+            //         if (channel == lastWorkingChannel) continue;
+            // 
+            //         if (sendOnChannel(channel)) {
+            //             logPrintf("[ESP-NOW] Delivery Success on channel %d, saving to RTC memory\n", channel);
+            //             lastWorkingChannel = channel;
+            //             success = true;
+            //             break;
+            //         }
+            //     }
+            // }
+
             if (!success) {
-                logMsg("[ESP-NOW] Delivery Failed on all channels.");
+                // logMsg("[ESP-NOW] Delivery Failed on all channels.");
+                logPrintf("[ESP-NOW] Delivery Failed on channel %d.\n", CHANNEL);
             }
         }
     }
@@ -282,7 +319,7 @@ void loop() {
     // we are using setup as loop
     // since it deep sleeps at the end meaning itll reset and then rerun setup
 #else
-#if defined(DEBUG_SERVER)
+#ifdef DEBUG_SERVER
     debugServer.handleClient();
 #endif
 
@@ -330,4 +367,3 @@ void loop() {
     }
 #endif
 }
-
