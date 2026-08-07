@@ -6,12 +6,19 @@
 #include <esp_idf_version.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include <time.h>
 
 volatile int lastEspNowRssi = 0;
 
 #if defined(DISCORD_WEBHOOK_URL) && defined(DISCORD_USER_ID) && defined(ALARM_THRESHOLD)
 #define ENABLE_DISCORD_WEBHOOK 1
+#endif
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+#define RUNNING_NEW_ESP_IDF_VERSION 1
 #endif
 
 const char* ntpTz = "EST5EDT,M3.2.0,M11.1.0";
@@ -269,18 +276,68 @@ bool connectWiFi() {
     return false;
 }
 
+String describeHttpError(int code, HTTPClient& http) {
+    if (code >= 0) {
+        return "HTTP status " + String(code);
+    } else {
+        String err = http.errorToString(code);
+        return err.length() > 0 ? err : "unknown error";
+    }
+}
+
 #if defined(ENABLE_DISCORD_WEBHOOK)
 unsigned long lastUploadTime = 0;
 bool alarmTriggered = false;
 
-void sendDiscordWebhook(const String& messageText, bool pingUser = false) {
-    if (WiFi.status() != WL_CONNECTED) {
-        logMsg("[DISCORD] Wi-Fi disconnected before sending webhook. Reconnecting...");
-        connectWiFi();
+struct DiscordQueueItem {
+    char message[256];
+    bool ping;
+};
+
+QueueHandle_t discordQueue = nullptr;
+TaskHandle_t discordWorkerTask = nullptr;
+
+void sendDiscordWebhook(const String& messageText, bool pingUser = false);
+
+void sendDiscordWebhookTask(void* param) {
+    (void)param;
+    DiscordQueueItem item;
+
+    while (true) {
+        if (xQueueReceive(discordQueue, &item, portMAX_DELAY) == pdTRUE) {
+            sendDiscordWebhook(String(item.message), item.ping);
+        }
+    }
+}
+
+void queueDiscordWebhook(const String& messageText, bool pingUser) {
+    if (!discordQueue) {
+        discordQueue = xQueueCreate(8, sizeof(DiscordQueueItem));
     }
 
+    if (!discordQueue) {
+        logMsg("[DISCORD] Failed to initialize webhook queue; dropping notification");
+        return;
+    }
+
+    DiscordQueueItem item;
+    memset(&item, 0, sizeof(item));
+    strncpy(item.message, messageText.c_str(), sizeof(item.message) - 1);
+    item.ping = pingUser;
+
+    if (xQueueSend(discordQueue, &item, 0) != pdTRUE) {
+        logMsg("[DISCORD] Webhook queue full; dropping notification");
+        return;
+    }
+
+    if (!discordWorkerTask) {
+        xTaskCreatePinnedToCore(sendDiscordWebhookTask, "discord-webhook", 4096, nullptr, 1, &discordWorkerTask, 1);
+    }
+}
+
+void sendDiscordWebhook(const String& messageText, bool pingUser = false) {
     if (WiFi.status() != WL_CONNECTED) {
-        logMsg("[DISCORD] Cannot send webhook - Wi-Fi connection unavailable");
+        logMsg("[DISCORD] Wi-Fi unavailable; skipping webhook notification");
         return;
     }
 
@@ -300,6 +357,8 @@ void sendDiscordWebhook(const String& messageText, bool pingUser = false) {
     HTTPClient http;
     if (http.begin(client, DISCORD_WEBHOOK_URL)) {
         http.addHeader("Content-Type", "application/json");
+        http.setTimeout(5000);
+        http.setConnectTimeout(5000);
 
         JsonDocument doc;
         doc["content"] = fullContent;
@@ -311,7 +370,7 @@ void sendDiscordWebhook(const String& messageText, bool pingUser = false) {
         if (httpCode > 0) {
             logPrintf("[DISCORD] Webhook sent successfully (Status %d)\n", httpCode);
         } else {
-            logPrintf("[DISCORD] Webhook send failed (Error: %s)\n", http.errorToString(httpCode).c_str());
+            logPrintf("[DISCORD] Webhook send failed (Code %d): %s\n", httpCode, describeHttpError(httpCode, http).c_str());
         }
         http.end();
     } else {
@@ -332,7 +391,7 @@ typedef struct __attribute__((packed)) struct_message {
 struct_message myData;
 volatile bool hasDataToSend = false;
 
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+#ifdef RUNNING_NEW_ESP_IDF_VERSION
 void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingData, int len) {
     logPrintf("\n");
 
@@ -373,8 +432,13 @@ void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingDat
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     char macStr[18] = "UNKNOWN";
     if (mac) {
-        snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        snprintf(
+            macStr,
+            sizeof(macStr),
+            "%02X:%02X:%02X:%02X:%02X:%02X",
+            mac[0], mac[1], mac[2],
+            mac[3], mac[4], mac[5]
+        );
     }
     if (len == sizeof(myData)) {
         memcpy(&myData, incomingData, sizeof(myData));
@@ -400,7 +464,6 @@ void setup() {
     logMsg("[SETUP] Starting ESP-NOW node setup...");
     logMsg(String("[ESP-IDF] Version: ") + esp_get_idf_version());
 
-    // WiFi.mode(WIFI_AP_STA);
     WiFi.mode(WIFI_MODE_STA);
 
     if (!connectWiFi()) {
@@ -412,6 +475,13 @@ void setup() {
 #endif
 
 #if defined(ENABLE_DISCORD_WEBHOOK)
+    if (!discordQueue) {
+        discordQueue = xQueueCreate(8, sizeof(DiscordQueueItem));
+    }
+    if (discordQueue && !discordWorkerTask) {
+        xTaskCreatePinnedToCore(sendDiscordWebhookTask, "discord-webhook", 4096, nullptr, 1, &discordWorkerTask, 1);
+    }
+
     lastUploadTime = millis();
     alarmTriggered = false;
     logMsg("[DISCORD] Webhook alarm feature enabled (Threshold: " + String(ALARM_THRESHOLD) + "s)");
@@ -444,7 +514,7 @@ void loop() {
         logMsg("[ALARM] Threshold elapsed without updates! Sending Discord webhook notification...");
 
         String alertText = "ESP-NOW Node: " + String(ALARM_THRESHOLD) + " seconds elapsed without an update!";
-        sendDiscordWebhook(alertText, true); // true = include ping
+        queueDiscordWebhook(alertText, true); // true = include ping
     }
 #endif
 
@@ -474,7 +544,7 @@ void loop() {
             doc["pressure"] = myData.pressure;
             doc["esp32_temperature"] = myData.esp32_temperature;
             doc["esp32_voltage"] = myData.esp32_voltage;
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+#ifdef RUNNING_NEW_ESP_IDF_VERSION
             doc["wifi_strength"] = lastEspNowRssi;
 #endif
 
@@ -488,9 +558,11 @@ void loop() {
             http.begin(SERVER_URL);
             http.addHeader("Content-Type", "application/json");
             http.addHeader("X-API-Key", API_KEY);
+            http.setTimeout(10000);
+            http.setConnectTimeout(10000);
             int code = http.POST(payload);
-            
-            if (code > 0) {
+
+            if (code >= 200 && code < 300) {
                 String response = http.getString();
                 if (response.length() > 0) {
                     logPrintf("[HTTP] Success (Status %d) | Response: %s\n", code, response.c_str());
@@ -500,13 +572,17 @@ void loop() {
 #if defined(ENABLE_DISCORD_WEBHOOK)
                 if (alarmTriggered) {
                     logMsg("[ALARM] Data updates resumed! Sending Discord recovery notification...");
-                    sendDiscordWebhook("ESP-NOW Node: Data updates have resumed!", false); // false = no ping
+                    queueDiscordWebhook("ESP-NOW Node: Data updates have resumed!", false);
                 }
                 lastUploadTime = millis();
                 alarmTriggered = false;
 #endif
             } else {
-                logPrintf("[HTTP] Error (Code %d): %s\n", code, http.errorToString(code).c_str());
+                logPrintf("[HTTP] Error (Code %d): %s\n", code, describeHttpError(code, http).c_str());
+#if defined(ENABLE_DISCORD_WEBHOOK)
+                String errorText = "ESP-NOW Node: HTTP upload failed (" + describeHttpError(code, http) + ")";
+                queueDiscordWebhook(errorText, true);
+#endif
             }
             http.end();
         } else {
