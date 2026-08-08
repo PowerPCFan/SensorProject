@@ -1,3 +1,13 @@
+# Variable                           | Example
+# GF_DATE_FORMATS_FULL_DATE          | YYYY-MM-DD HH:mm:ss
+# GF_DATE_FORMATS_INTERVAL_SECOND    | HH:mm:ss
+# GF_DATE_FORMATS_INTERVAL_MINUTE    | HH:mm
+# GF_DATE_FORMATS_INTERVAL_HOUR      | MM/DD HH:mm
+# GF_DATE_FORMATS_INTERVAL_DAY       | MM/DD
+# GF_DATE_FORMATS_INTERVAL_MONTH     | YYYY-MM
+# GF_DATE_FORMATS_INTERVAL_YEAR      | YYYY
+# GF_DATE_FORMATS_USE_BROWSER_LOCALE | true or false
+
 services:
   grafana:
     image: grafana/grafana-oss:latest
@@ -6,6 +16,8 @@ services:
       - timescaledb_default
     ports:
       - "3000:3000"
+    environment:
+      - GF_DATE_FORMATS_USE_BROWSER_LOCALE=true
     volumes:
       - grafana_data:/var/lib/grafana
     restart: unless-stopped

@@ -393,9 +393,27 @@ typedef struct __attribute__((packed)) struct_message {
 struct_message myData;
 volatile bool hasDataToSend = false;
 
+String getReasonLog() {
+    esp_reset_reason_t reason = esp_reset_reason();
+    const char* reasonText = nullptr;
+    switch (reason) {
+        case ESP_RST_POWERON:   reasonText = "Power-on event"; break;
+        case ESP_RST_SW:        reasonText = "Software (esp_restart)"; break;
+        case ESP_RST_PANIC:     reasonText = "Crash/exception"; break;
+        case ESP_RST_INT_WDT:   reasonText = "Watchdog timer"; break;
+        case ESP_RST_TASK_WDT:  reasonText = "Watchdog timer"; break;
+        case ESP_RST_DEEPSLEEP: reasonText = "Deep sleep"; break;
+        case ESP_RST_BROWNOUT:  reasonText = "Brownout"; break;
+        default:                reasonText = nullptr; break;
+    }
+    return "[SETUP] Last reset reason: " + (reasonText != nullptr ? reasonText : ("Reset reason code: " + String(reason)));
+}
+String reasonLog = getReasonLog();
+
 #ifdef RUNNING_NEW_ESP_IDF_VERSION
 void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingData, int len) {
     logPrintf("\n");
+    logMsg(reasonLog);
 
     if (recv_info && recv_info->rx_ctrl) {
         lastEspNowRssi = recv_info->rx_ctrl->rssi;
@@ -432,6 +450,8 @@ void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingDat
 }
 #else
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+    logMsg("\n");
+    logMsg(reasonLog);
     char macStr[18] = "UNKNOWN";
     if (mac) {
         snprintf(
@@ -465,22 +485,7 @@ void setup() {
     delay(2000); 
     logMsg("[SETUP] Starting ESP-NOW node setup...");
 
-    esp_reset_reason_t reason = esp_reset_reason();
-    const char* reasonText = nullptr;
-    switch (reason) {
-        case ESP_RST_POWERON:   reasonText = "Power-on event"; break;
-        case ESP_RST_SW:        reasonText = "Software (esp_restart)"; break;
-        case ESP_RST_PANIC:     reasonText = "Crash/exception"; break;
-        case ESP_RST_INT_WDT:   reasonText = "Watchdog timer"; break;
-        case ESP_RST_TASK_WDT:  reasonText = "Watchdog timer"; break;
-        case ESP_RST_DEEPSLEEP: reasonText = "Deep sleep"; break;
-        case ESP_RST_BROWNOUT:  reasonText = "Brownout"; break;
-        default:                reasonText = nullptr; break;
-    }
-    logMsg(
-        "[SETUP] Last reset reason: "
-        + (reasonText != nullptr ? reasonText : ("Reset reason code: " + String(reason)))
-    );
+    logMsg(reasonLog);
 
     logMsg(String("[ESP-IDF] Version: ") + esp_get_idf_version());
 
