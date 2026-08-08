@@ -183,7 +183,7 @@ bool sendOnChannel(uint8_t channel) {
     esp_now_send(targetAddress, (uint8_t *) &myData, sizeof(myData));
 
     int wait_ms = 0;
-    while (!deliveryComplete && wait_ms < 50) {
+    while (!deliveryComplete && wait_ms < 100) {
         delay(1);
         wait_ms++;
     }
@@ -201,15 +201,16 @@ void setup() {
     constexpr int CPU_MHZ = 240;
 #endif
 
+    // unfortunately this runs before speed is changed but ehh probably doesnt matter too much
+    Serial.begin(115200);
+    delay(2500);
+    logMsg("\n[SETUP] Starting setup...");
+
     if (!setCpuFrequencyMhz(CPU_MHZ)) {
         logMsg("[SETUP] Failed to set CPU frequency to " + String(CPU_MHZ) + " MHz");
     } else {
         logMsg("[SETUP] CPU frequency set to " + String(CPU_MHZ) + " MHz" + (CPU_MHZ == 240 ? " (default)" : "") + (CPU_MHZ == getCpuFrequencyMhz() ? " (confirmed)" : " (WARN: mismatch between getCpuFrequencyMhz() and requested frequency)"));
     }
-
-    Serial.begin(115200);
-    logMsg("\n[SETUP] Starting setup...");
-    logPrintf("[SETUP] CPU Frequency: %u MHz\n", getCpuFrequencyMhz());
 
 #ifdef VOLTAGE_PIN
     pinMode(VOLTAGE_PIN, INPUT);
@@ -233,7 +234,7 @@ void setup() {
         logMsg("[BME280] BME280 found at 0x76");
     }
 
-    if (!aht.begin(&internalBus, 0, 38U)) {
+    if (!aht.begin(&internalBus)) {
         logMsg("[AHT20] Could not find a valid AHT20 sensor on pins 25/26 with address 0x38");
     } else {
         ahtReady = true;
