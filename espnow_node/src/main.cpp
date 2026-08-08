@@ -464,6 +464,24 @@ void setup() {
     Serial.begin(115200);
     delay(2000); 
     logMsg("[SETUP] Starting ESP-NOW node setup...");
+
+    esp_reset_reason_t reason = esp_reset_reason();
+    const char* reasonText = nullptr;
+    switch (reason) {
+        case ESP_RST_POWERON:   reasonText = "Power-on event"; break;
+        case ESP_RST_SW:        reasonText = "Software (esp_restart)"; break;
+        case ESP_RST_PANIC:     reasonText = "Crash/exception"; break;
+        case ESP_RST_INT_WDT:   reasonText = "Watchdog timer"; break;
+        case ESP_RST_TASK_WDT:  reasonText = "Watchdog timer"; break;
+        case ESP_RST_DEEPSLEEP: reasonText = "Deep sleep"; break;
+        case ESP_RST_BROWNOUT:  reasonText = "Brownout"; break;
+        default:                reasonText = nullptr; break;
+    }
+    logMsg(
+        "[SETUP] Last reset reason: "
+        + (reasonText != nullptr ? reasonText : ("Reset reason code: " + String(reason)))
+    );
+
     logMsg(String("[ESP-IDF] Version: ") + esp_get_idf_version());
 
     WiFi.mode(WIFI_MODE_STA);
