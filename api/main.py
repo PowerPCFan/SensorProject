@@ -154,6 +154,32 @@ async def verify_api_key(api_key: str = Security(api_key_header)) -> None:  # ru
         raise HTTPException(status_code=403, detail="Invalid API Key")
 
 
+@app.post("/pause/{table}", dependencies=[Security(verify_api_key)])
+async def pause_table(table: str) -> JSONResponse:
+    table_enum = Table.from_str(table)
+    if table_enum is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    paused_tables.add(table_enum)
+    return JSONResponse(
+        status_code=200,
+        content={"status": "paused", "table": table_enum.value},
+    )
+
+
+@app.post("/resume/{table}", dependencies=[Security(verify_api_key)])
+async def resume_table(table: str) -> JSONResponse:
+    table_enum = Table.from_str(table)
+    if table_enum is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    paused_tables.discard(table)
+    return JSONResponse(
+        status_code=200,
+        content={"status": "resumed", "table": table_enum.value},
+    )
+
+
 class Table(Enum):
     INDOOR = "indoor"
     OUTDOOR = "outdoor"
@@ -167,6 +193,24 @@ class Table(Enum):
                 return member
 
         return None
+
+
+paused_tables: set[Table] = set()
+
+
+def is_table_paused(table: Table) -> bool:
+    return table in paused_tables
+
+
+def table_paused_response(table_value: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "status": "paused",
+            "table": table_value,
+            "message": "Updates are currently paused for this table.",
+        },
+    )
 
 
 async def insert_data(table: Table, data: dict) -> None:
@@ -301,12 +345,17 @@ async def update_outdoor(data: OutdoorData) -> JSONResponse:
     #  Outdoor ESP32
     # -------------------------------------------------
     #  Metrics from outdoor ESP32:
-    #  Temp/Humidity/Pressure Sensor (BME280) Readouts
-    #  Light Level Sensor (BH1750) Readouts
-    #  ESP32 Health Metrics
+    #    Temp/Humidity/Pressure Sensor (BME280) Readouts
+    #    Calculated Measurements (Dew point)
+    #    Light Level Sensor (BH1750) Readouts
+    #    Internal Temperature (AHT20) Readouts
+    #    ESP32 Health Metrics (temp, voltage, wifi strength)
     # -------------------------------------------------
 
     table = Table.OUTDOOR
+    if is_table_paused(table):
+        return table_paused_response(table.value)
+
     valid_data = {k: v for k, v in data.model_dump().items() if v is not None}
     valid_data = {k: v for k, v in valid_data.items() if not (isinstance(v, float) and math.isnan(v))}
 
@@ -348,6 +397,9 @@ async def update_indoor(data: IndoorData) -> JSONResponse:
     # -------------------------------------------------
 
     table = Table.INDOOR
+    if is_table_paused(table):
+        return table_paused_response(table.value)
+
     valid_data: dict[str, float] = {}
 
     for k, v in data.model_dump().items():
