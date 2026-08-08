@@ -173,7 +173,7 @@ async def resume_table(table: str) -> JSONResponse:
     if table_enum is None:
         raise HTTPException(status_code=404, detail="Table not found")
 
-    paused_tables.discard(table)
+    paused_tables.discard(table_enum)
     return JSONResponse(
         status_code=200,
         content={"status": "resumed", "table": table_enum.value},
