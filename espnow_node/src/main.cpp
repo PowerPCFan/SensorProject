@@ -163,59 +163,14 @@ void logPrintf(const char *format, ...) {
 }
 
 #if defined(DEBUG_SERVER)
-const char PAGE_HEADER[] PROGMEM = R"rawhtml(
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <link rel="icon" href="data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAQAQAAAAAAAAAAAAAAAAAAAAAAAD////////////////////////////////4+vv////////////////////////////////////////////////////////////////////////////l5uf/qLCz//H09v/////////////////////////////////////////////////////////////////X2Nn/YmRk/1tfYP+coKL/7vL0//////////////////////////////////////////////////n7+//Q1tf/cnV2/0xNTf8wMDD/V1la/5icnv/s8PH/////////////////////////////////7vHx/83R0v+ssbL/2Nzc/6Snp/87PDz/WFdW/3R0c/9maGn/l5ud/+ru7//+/v///////////////////////66xsf9DRUb/VlZW/5SWlv9LTEz/MDAw/zQzM/91dXX/Tk5O/1haWv+VmZv/5urs//7+/v/////////////////p6ur/X2Fi/zk4OP88PT3/KCcn/zM0NP8+Pj7/SUlJ/0RGR/8hICH/ZGdo/5OXmP/n7O3//v7+/////////////////+jo6P9oamv/VFRU/0JCQv8sLC3/LS0u/0ZGRv9RVFj/JCIi/1BSUv9cX1//j5OV/+Xr7P/+/v7/////////////////7e7u/3N2dv8oNTr/XH+X/0NHSP8aGBj/DwwM/yEiJP8+TFD/aHF1/1pdXv+MkZL/6e7v//7////////////////////w8fH/gpCW/0psgP8vMDL/EhAQ/zlCRv9UbXT/eI2U/4qbof9xfIH/Wl5f/4+Ulv/u8PL///////////////////////T09P+KjY7/SEtM/zxJTf9ogon/hJWZ/46bnf+MmZz/ipyh/3N/hP9bXl//t7i5////////////////////////////9vb2/5GUlP9QWlz/gY6S/4iUmP+Kl5n/i5ia/4yZm/+RoKT/Z2xv/9na2v/////////////////////////////////4+Pj/nqKi/1xiZP+EkZP/jJmb/4SRk/+CjpD/UldY/xoYGP+MjIz///////////////////////////////////////r6+v+nqqr/XmRl/11kZf9aXFz/LCws/xcUFP9qaWn/3t7e////////////////////////////////////////////+/v7/7a5uv+LjI3/LCkp/zo4OP+0s7P/+Pj4///////////////////////////////////////////////////////+/v7//v7+/9TU1P/m5ub//v7+////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==" type="image/x-icon">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:ital,wght@0,100..900;1,100..900&family=Google+Sans+Flex:opsz,wght@6..144,1..1000&display=swap" rel="stylesheet">
-    <title>ESP-NOW Node Logs</title>
-    <style>
-        body{font-family:'Google Sans Flex',system-ui,sans-serif;color:#ebebeb;padding:1rem;background:#1c1c1c;width:100%;max-width:1300px;padding:1rem;box-sizing:border-box;margin:0 auto;}
-        h2{margin:0;font-size:1.25rem;font-weight:600;margin-bottom:0.5rem;}
-        pre{background:#050505;color:#fff;padding:0.75rem;font-family:'Geist Mono',monospace;font-size:.875rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:550px;overflow-y:auto;margin:0;margin-top:0.5rem;}
-        .muted{color:#adadad;font-size:0.9rem;margin-block:0.25rem;}
-    </style>
-    <script>
-        setTimeout(function(){
-            window.location.reload();
-        }, 30000);
-    </script>
-</head>
-<body>
-    <p class="muted">ESP-NOW Node Debug Server</p>
-    <h2>Logs</h2>
-    <p>Refreshes every 30 seconds. A maximum of 60 lines or 4096 bytes of logs are shown at a time.</p>
-    <pre>)rawhtml";
-
-const char PAGE_FOOTER[] PROGMEM = R"rawhtml(</pre>
-</body>
-</html>
-)rawhtml";
-
-String getLogHtml() {
-    String html;
-    html.reserve(sizeof(PAGE_HEADER) + logBuffer.length() * 2 + sizeof(PAGE_FOOTER));
-    html += PAGE_HEADER;
-    html += (logBuffer.length() == 0 ? "No logs recorded yet.\n" : htmlEscape(logBuffer));
-    html += PAGE_FOOTER;
-    return html;
-}
-
 void setupDebugServer() {
     if (!serverStarted) {
         debugServer.on("/", []() {
-            debugServer.send(200, "text/html", getLogHtml());
+            debugServer.sendHeader("Location", "/raw");
+            debugServer.send(302, "text/plain", "");
         });
         debugServer.on("/raw", []() {
             debugServer.send(200, "text/plain", logBuffer.length() == 0 ? "No logs recorded yet.\n" : logBuffer);
-        });
-        debugServer.on("/favicon.ico", []() {
-            // no need for favicon here since its base64 in the head
-            debugServer.send(200, "image/x-icon", "data:,");
         });
         debugServer.onNotFound([]() {
             debugServer.send(404, "text/plain", "ESP-NOW Node Debug Server: 404 Page Not Found\n");
@@ -331,7 +286,7 @@ void queueDiscordWebhook(const String& messageText, bool pingUser) {
     }
 
     if (!discordWorkerTask) {
-        xTaskCreatePinnedToCore(sendDiscordWebhookTask, "discord-webhook", 4096, nullptr, 1, &discordWorkerTask, 1);
+        xTaskCreatePinnedToCore(sendDiscordWebhookTask, "discord-webhook", 8192, nullptr, 1, &discordWorkerTask, 1);
     }
 }
 
@@ -495,16 +450,12 @@ void setup() {
         logMsg("[SETUP] Initial Wi-Fi connection failed after 10 attempts.");
     }
 
-#if defined(DEBUG_SERVER)
-    setupDebugServer();
-#endif
-
 #if defined(ENABLE_DISCORD_WEBHOOK)
     if (!discordQueue) {
         discordQueue = xQueueCreate(8, sizeof(DiscordQueueItem));
     }
     if (discordQueue && !discordWorkerTask) {
-        xTaskCreatePinnedToCore(sendDiscordWebhookTask, "discord-webhook", 4096, nullptr, 1, &discordWorkerTask, 1);
+        xTaskCreatePinnedToCore(sendDiscordWebhookTask, "discord-webhook", 8192, nullptr, 1, &discordWorkerTask, 1);
     }
 
     lastUploadTime = millis();

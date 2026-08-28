@@ -4,6 +4,7 @@
 #include <Adafruit_BME280.h>
 #include <Adafruit_AHTX0.h>
 #include <WiFi.h>
+#include <WebServer.h>
 #include <math.h>
 
 #ifdef VOLTAGE_PIN
@@ -26,77 +27,29 @@ float readESP32Voltage() {
 }
 #endif
 
-#if !defined(ESPNOW_ENABLED) && defined(DEBUG_SERVER)
-#include <WebServer.h>
-
-WebServer debugServer(80);
-bool serverStarted = false;
-String logBuffer = "";
-const size_t MAX_LOG_SIZE = 4096;
-
-void appendLogBuffer(const String& str) {
-    logBuffer += str;
-    if (logBuffer.length() > MAX_LOG_SIZE) {
-        logBuffer = logBuffer.substring(logBuffer.length() - (MAX_LOG_SIZE / 2));
-    }
-}
-
-void logMsg(const String &msg) {
-    Serial.println(msg);
-    appendLogBuffer(msg + "\n");
-}
-
-void logPrintf(const char *format, ...) {
-    char buf[256];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(buf, sizeof(buf), format, args);
-    va_end(args);
-    Serial.print(buf);
-    appendLogBuffer(String(buf));
-}
-
-void setupDebugServer() {
-    if (!serverStarted) {
-        debugServer.on("/", []() {
-            debugServer.send(200, "text/plain", logBuffer.length() == 0 ? "No logs recorded yet.\n" : logBuffer);
-        });
-        debugServer.begin();
-        serverStarted = true;
-        logMsg("[DEBUG_SERVER] Server started (http://" + WiFi.localIP().toString() + "/)");
-    }
-}
-#else
 #define logMsg(msg) Serial.println(msg)
 #define logPrintf(fmt, ...) Serial.printf(fmt, ##__VA_ARGS__)
-#endif
 
-#ifdef ESPNOW_ENABLED
-#include <esp_now.h>
-#include <esp_wifi.h>
-
-const uint64_t TIME_TO_SLEEP_US = (uint64_t)POST_DELAY_MS * 1000ULL;
-#else
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
-
-unsigned long lastTime = 0;
-const unsigned long timerDelay = POST_DELAY_MS;
-
-void goToDeepSleep(uint64_t seconds, const char* reason) {
-    logPrintf("\n[DEEP_SLEEP] %s. Sleeping for %llu seconds...\n", reason, seconds);
-    Serial.flush();
-    esp_sleep_enable_timer_wakeup(seconds * 1000000ULL);
-    esp_deep_sleep_start();
-}
+RTC_DATA_ATTR uint8_t lastWorkingChannel = 0;
+RTC_DATA_ATTR bool lastSendSuccess = false;
+RTC_DATA_ATTR uint32_t totalPacketsSent = 0;
+RTC_DATA_ATTR uint32_t totalPacketsFailed = 0;
+RTC_DATA_ATTR float lastEsp32Temp = 0.0f;
+RTC_DATA_ATTR float lastEsp32Voltage = 0.0f;
+RTC_DATA_ATTR float lastBmeTemp = NAN;
+RTC_DATA_ATTR float lastBmeHumidity = NAN;
+RTC_DATA_ATTR float lastBmePressure = NAN;
+RTC_DATA_ATTR float lastAhtTemp = NAN;
+RTC_DATA_ATTR float lastAhtHumidity = NAN;
 
 bool connectWiFi() {
+#if defined(WIFI_SSID) && defined(WIFI_PASS)
     if (WiFi.status() == WL_CONNECTED) {
         return true;
     }
 
     const int maxAttempts = 10;
-    const unsigned long attemptTimeoutMs = 15000; // 15 secs per attempt
+    const unsigned long attemptTimeoutMs = 15000;
     const char* spinner[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
 
     for (int attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -120,19 +73,91 @@ bool connectWiFi() {
 
         if (WiFi.status() == WL_CONNECTED) {
             logMsg("\r[WIFI] Connected! | Local IP: " + WiFi.localIP().toString());
-#if !defined(ESPNOW_ENABLED) && defined(DEBUG_SERVER)
-            setupDebugServer();
-#endif
             return true;
         }
 
         logPrintf("\r[WIFI] Attempt %d failed or timed out after 15s.\n", attempt);
         if (attempt < maxAttempts) {
-            delay(1000); // 1-second pause between attempts
+            delay(1000);
         }
     }
 
     return false;
+#else
+    logMsg("[WIFI] Error: WIFI_SSID and WIFI_PASS are not defined in build flags!");
+    return false;
+#endif
+}
+
+#ifdef ESPNOW_ENABLED
+void checkBootButtonDebugMode() {
+    pinMode(0, INPUT_PULLUP);
+    if (digitalRead(0) == LOW) {
+        logMsg("\n[BOOT_MODE] BOOT button held! Starting debug web server...");
+
+        if (connectWiFi()) {
+            String ipStr = WiFi.localIP().toString();
+            logMsg("[BOOT_MODE] Wi-Fi IP Address: " + ipStr);
+            logMsg("[BOOT_MODE] Access debug dashboard at: http://" + ipStr + "/");
+
+            WebServer debugServer(80);
+
+            debugServer.on("/", [&]() {
+                String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
+                html += "<style>body{font-family:'Google Sans Flex','Inter',system-ui;background:#121212;color:#ebebeb;padding:1rem;} table{border-collapse:collapse;width:100%;max-width:600px;} th,td{border:1px solid #333;padding:0.5rem 0.75rem;text-align:left;} th{background:#1f1f1f;color:#fff;}</style>";
+                html += "</head><body><h1>Outdoor ESP32 Debug Stats</h1><table>";
+                html += "<tr><th>Metric</th><th>Value</th></tr>";
+                html += "<tr><td>Last ESP-NOW Channel</td><td>" + String(lastWorkingChannel == 0 ? "None (Not sent yet)" : String(lastWorkingChannel)) + "</td></tr>";
+                html += "<tr><td>Last Send Result</td><td>" + String(totalPacketsSent == 0 ? "No packets sent yet" : (lastSendSuccess ? "<span class='badge-ok'>SUCCESS</span>" : "<span class='badge-err'>FAILED</span>")) + "</td></tr>";
+                html += "<tr><td>Total Packets Sent</td><td>" + String(totalPacketsSent) + "</td></tr>";
+                html += "<tr><td>Total Packets Failed</td><td>" + String(totalPacketsFailed) + "</td></tr>";
+                html += "<tr><td>Last ESP32 Temp</td><td>" + String(lastEsp32Temp, 1) + "&deg;C</td></tr>";
+                html += "<tr><td>Last ESP32 Voltage</td><td>" + String(lastEsp32Voltage, 2) + " V</td></tr>";
+                html += "<tr><td>Last BME280 Temp</td><td>" + (isnan(lastBmeTemp) ? "N/A" : String(lastBmeTemp, 1) + "&deg;C") + "</td></tr>";
+                html += "<tr><td>Last BME280 Humidity</td><td>" + (isnan(lastBmeHumidity) ? "N/A" : String(lastBmeHumidity, 1) + " %") + "</td></tr>";
+                html += "<tr><td>Last BME280 Pressure</td><td>" + (isnan(lastBmePressure) ? "N/A" : String(lastBmePressure, 1) + " hPa") + "</td></tr>";
+                html += "<tr><td>Last AHT20 Temp</td><td>" + (isnan(lastAhtTemp) ? "N/A" : String(lastAhtTemp, 1) + "&deg;C") + "</td></tr>";
+                html += "<tr><td>Last AHT20 Humidity</td><td>" + (isnan(lastAhtHumidity) ? "N/A" : String(lastAhtHumidity, 1) + "%") + "</td></tr>";
+                html += "</table></body></html>";
+                debugServer.send(200, "text/html", html);
+            });
+
+            debugServer.begin();
+            logMsg("[BOOT_MODE] Debug web server active on port 80 at http://" + ipStr + "/");
+
+            while (digitalRead(0) == LOW) {
+                debugServer.handleClient();
+                delay(10);
+            }
+
+            logMsg("[BOOT_MODE] BOOT button released! Exiting debug mode and restarting...");
+            delay(500);
+            esp_restart();
+        } else {
+            logMsg("[BOOT_MODE] Wi-Fi connection failed! Resuming normal setup...");
+        }
+    }
+}
+#endif
+
+#ifdef ESPNOW_ENABLED
+#include <esp_now.h>
+#include <esp_wifi.h>
+
+const uint64_t TIME_TO_SLEEP_US = (uint64_t)POST_DELAY_MS * 1000ULL;
+#else
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+unsigned long lastTime = 0;
+const unsigned long timerDelay = POST_DELAY_MS;
+
+void goToDeepSleep(uint64_t seconds, const char* reason) {
+    logPrintf("\n[DEEP_SLEEP] %s. Sleeping for %llu seconds...\n", reason, seconds);
+    Serial.flush();
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
+    esp_sleep_enable_timer_wakeup(seconds * 1000000ULL);
+    esp_deep_sleep_start();
 }
 #endif
 
@@ -161,8 +186,6 @@ esp_now_peer_info_t peerInfo;
 volatile bool deliveryComplete = false;
 volatile bool deliverySuccess = false;
 
-// RTC_DATA_ATTR uint8_t lastWorkingChannel = 0;
-
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
     deliverySuccess = (status == ESP_NOW_SEND_SUCCESS);
     deliveryComplete = true;
@@ -176,6 +199,7 @@ bool sendOnChannel(uint8_t channel) {
     }
 
     esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    delay(15);
 
     deliveryComplete = false;
     deliverySuccess = false;
@@ -201,7 +225,6 @@ void setup() {
     constexpr int CPU_MHZ = 240;
 #endif
 
-    // unfortunately this runs before speed is changed but ehh probably doesnt matter too much
     Serial.begin(115200);
     delay(2500);
     logMsg("\n[SETUP] Starting setup...");
@@ -211,6 +234,10 @@ void setup() {
     } else {
         logMsg("[SETUP] CPU frequency set to " + String(CPU_MHZ) + " MHz" + (CPU_MHZ == 240 ? " (default)" : "") + (CPU_MHZ == getCpuFrequencyMhz() ? " (confirmed)" : " (WARN: mismatch between getCpuFrequencyMhz() and requested frequency)"));
     }
+
+#ifdef ESPNOW_ENABLED
+    checkBootButtonDebugMode();
+#endif
 
 #ifdef VOLTAGE_PIN
     pinMode(VOLTAGE_PIN, INPUT);
@@ -255,7 +282,6 @@ void setup() {
     } else {
         esp_now_register_send_cb(OnDataSent);
 
-        // parse mac address
         int mac[6];
         if (6 == sscanf(ESPNOW_NODE, "%x:%x:%x:%x:%x:%x", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5])) {
             for (int i = 0; i < 6; ++i) {
@@ -278,58 +304,87 @@ void setup() {
             myData.temperature = bme.readTemperature();
             myData.humidity = bme.readHumidity();
             myData.pressure = bme.readPressure() / 100.0f;
-            if (ahtReady) {
-                sensors_event_t humidityEvent;
-                sensors_event_t tempEvent;
-                aht.getEvent(&humidityEvent, &tempEvent);
-                myData.internal_temperature = tempEvent.temperature;
-                myData.internal_humidity = humidityEvent.relative_humidity;
-            } else {
-                myData.internal_temperature = NAN;
-                myData.internal_humidity = NAN;
-            }
-            myData.esp32_temperature = temperatureRead();
-            myData.esp32_voltage = readESP32Voltage();
+        } else {
+            myData.temperature = NAN;
+            myData.humidity = NAN;
+            myData.pressure = NAN;
+        }
 
-            bool success = false;
+        if (ahtReady) {
+            sensors_event_t humidityEvent;
+            sensors_event_t tempEvent;
+            aht.getEvent(&humidityEvent, &tempEvent);
+            myData.internal_temperature = tempEvent.temperature;
+            myData.internal_humidity = humidityEvent.relative_humidity;
+        } else {
+            myData.internal_temperature = NAN;
+            myData.internal_humidity = NAN;
+        }
 
-            const uint8_t CHANNEL = 6;
-            logPrintf("[ESP-NOW] Sending on channel %d...\n", CHANNEL);
-            if (sendOnChannel(CHANNEL)) {
-                logPrintf("[ESP-NOW] Delivery Success on channel %d\n", CHANNEL);
+        myData.esp32_temperature = temperatureRead();
+        myData.esp32_voltage = readESP32Voltage();
+
+        lastBmeTemp = myData.temperature;
+        lastBmeHumidity = myData.humidity;
+        lastBmePressure = myData.pressure;
+        lastAhtTemp = myData.internal_temperature;
+        lastAhtHumidity = myData.internal_humidity;
+        lastEsp32Temp = myData.esp32_temperature;
+        lastEsp32Voltage = myData.esp32_voltage;
+
+        bool success = false;
+        const uint8_t primaryChannels[] = {1, 6, 11};
+        const uint8_t secondaryChannels[] = {2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
+
+        if (lastWorkingChannel >= 1 && lastWorkingChannel <= 13) {
+            logPrintf("[ESP-NOW] Trying cached channel %d...\n", lastWorkingChannel);
+            if (sendOnChannel(lastWorkingChannel)) {
+                logPrintf("[ESP-NOW] Delivery Success on cached channel %d\n", lastWorkingChannel);
                 success = true;
+            } else {
+                logPrintf("[ESP-NOW] Delivery failed on cached channel %d, trying primary channels...\n", lastWorkingChannel);
             }
+        }
 
-            // if (lastWorkingChannel >= 1 && lastWorkingChannel <= 11) {
-            //     logPrintf("[ESP-NOW] Trying cached channel %d...\n", lastWorkingChannel);
-            //     if (sendOnChannel(lastWorkingChannel)) {
-            //         logPrintf("[ESP-NOW] Delivery Success on cached channel %d\n", lastWorkingChannel);
-            //         success = true;
-            //     } else {
-            //         logPrintf("[ESP-NOW] Delivery failed on cached channel %d, starting channel sweep...\n", lastWorkingChannel);
-            //     }
-            // }
-            // 
-            // if (!success) {
-            //     for (uint8_t channel = 1; channel <= 11; channel++) {
-            //         if (channel == lastWorkingChannel) continue;
-            // 
-            //         if (sendOnChannel(channel)) {
-            //             logPrintf("[ESP-NOW] Delivery Success on channel %d, saving to RTC memory\n", channel);
-            //             lastWorkingChannel = channel;
-            //             success = true;
-            //             break;
-            //         }
-            //     }
-            // }
+        if (!success) {
+            for (uint8_t ch : primaryChannels) {
+                if (ch == lastWorkingChannel) continue;
 
-            if (!success) {
-                // logMsg("[ESP-NOW] Delivery Failed on all channels.");
-                logPrintf("[ESP-NOW] Delivery Failed on channel %d.\n", CHANNEL);
+                logPrintf("[ESP-NOW] Trying primary channel %d...\n", ch);
+                if (sendOnChannel(ch)) {
+                    logPrintf("[ESP-NOW] Delivery Success on channel %d, saving to RTC memory\n", ch);
+                    lastWorkingChannel = ch;
+                    success = true;
+                    break;
+                }
             }
+        }
+
+        if (!success) {
+            logMsg("[ESP-NOW] Primary channels failed, trying secondary channels...");
+            for (uint8_t ch : secondaryChannels) {
+                if (ch == lastWorkingChannel) continue;
+
+                logPrintf("[ESP-NOW] Trying secondary channel %d...\n", ch);
+                if (sendOnChannel(ch)) {
+                    logPrintf("[ESP-NOW] Delivery Success on channel %d, saving to RTC memory\n", ch);
+                    lastWorkingChannel = ch;
+                    success = true;
+                    break;
+                }
+            }
+        }
+
+        totalPacketsSent++;
+        lastSendSuccess = success;
+
+        if (!success) {
+            totalPacketsFailed++;
+            logMsg("[ESP-NOW] Delivery Failed on all channels (1-13).");
         }
     }
 
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
     esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_US);
     logMsg("[DEEP_SLEEP] Going to sleep for " + String((uint32_t)TIME_TO_SLEEP_US) + " microseconds.");
     Serial.flush(); 
@@ -364,11 +419,6 @@ void loop() {
             JsonDocument doc;
 
             if (bmeReady) {
-                // measurements:
-                // - temp: celsius (c)
-                // - humidity: relative humidity (%)
-                // - pressure: hectopascals (hPa)
-
                 doc["temperature"] = bme.readTemperature();
                 doc["humidity"] = bme.readHumidity();
                 doc["pressure"] = bme.readPressure() / 100.0f;
