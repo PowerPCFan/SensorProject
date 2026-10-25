@@ -70,8 +70,8 @@ async def get_latest(request: Request) -> JSONResponse:
     try:
         client = cast("httpx.AsyncClient", request.app.state.client)
         in_res, out_res = await asyncio.gather(
-            client.get("http://127.0.0.1:8080/latest/indoor"),
-            client.get("http://127.0.0.1:8080/latest/outdoor"),
+            client.get("http://api:8080/latest/indoor"),
+            client.get("http://api:8080/latest/outdoor"),
         )
 
         if in_res.status_code != 200 or out_res.status_code != 200:  # noqa: PLR2004

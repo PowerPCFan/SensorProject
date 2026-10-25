@@ -4,6 +4,8 @@ services:
     container_name: publicapi
     ports:
       - "9191:9191"
+    networks:
+      - timescaledb_default
     restart: unless-stopped
     healthcheck:
       test:
