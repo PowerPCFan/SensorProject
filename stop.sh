@@ -5,6 +5,11 @@ cd "$(dirname "$0")/grafana"
 docker compose down
 cd ..
 
+echo "Stopping Public API..."
+cd public
+docker compose down
+cd ..
+
 echo "Stopping API..."
 cd api
 docker compose down

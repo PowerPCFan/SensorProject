@@ -9,6 +9,11 @@ cd grafana
 docker compose down
 cd ..
 
+echo "Stopping Public API..."
+cd public
+docker compose down
+cd ..
+
 echo "Stopping API..."
 cd api
 docker compose down
@@ -28,6 +33,11 @@ cd ..
 
 echo "Starting API..."
 cd api
+docker compose up -d --build
+cd ..
+
+echo "Starting Public API..."
+cd public
 docker compose up -d --build
 cd ..
 

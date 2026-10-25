@@ -10,6 +10,11 @@ cd api
 docker compose up -d
 cd ..
 
+echo "Starting Public API..."
+cd public
+docker compose up -d
+cd ..
+
 echo "Starting Grafana..."
 cd grafana
 docker compose up -d

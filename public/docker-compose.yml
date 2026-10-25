@@ -1,0 +1,15 @@
+services:
+  publicapi:
+    build: .
+    container_name: publicapi
+    ports:
+      - "9191:9191"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:9191/health')"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
